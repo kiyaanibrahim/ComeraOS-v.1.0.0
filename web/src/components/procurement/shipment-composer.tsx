@@ -2,9 +2,12 @@
 
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { FlowFrame } from "@/components/flow/flow-frame"
+import { chargesToDrafts, type ChargeDraft } from "@/components/procurement/charge-drafts"
+import { FieldCard, FieldGrid, FormSection } from "@/components/procurement/form-row"
+import { ProcurementNav } from "@/components/procurement/procurement-nav"
 import { catalogGaps, ProductPicker, type CatalogProduct } from "@/components/procurement/product-picker"
 import { Button } from "@/components/ui/button"
 import {
@@ -15,7 +18,6 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
@@ -23,7 +25,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
 import {
   Table,
   TableBody,
@@ -41,6 +42,7 @@ import {
   type AllocationMethod,
 } from "@/lib/flow/cost"
 import { money, quantity } from "@/lib/flow/format"
+import { chargeGroups, groupLabel } from "@/lib/flow/procurement"
 import { callRpc } from "@/lib/flow/rpc"
 import type { BusinessRecord, FlowClient } from "@/lib/flow/use-business"
 
@@ -58,16 +60,6 @@ type CartLine = {
   supplierSku: string | null
 }
 
-type ChargeDraft = {
-  key: string
-  kind: string
-  group: string
-  amount: string
-  recoverable: boolean
-}
-
-const chargeKinds = ["freight", "insurance", "duty", "brokerage", "tax", "other"] as const
-
 export function ShipmentComposer({
   businessKey,
   shipmentId,
@@ -80,6 +72,7 @@ export function ShipmentComposer({
       businessKey={businessKey}
       title={shipmentId ? "Edit draft" : "New draft"}
       description="Name the shipment, choose products, and save. Converting it starts the tracker."
+      aside={<ProcurementNav businessKey={businessKey} current="drafts" />}
     >
       {({ business, supabase }) => (
         <Composer
@@ -131,10 +124,11 @@ function Composer({
   const [declared, setDeclared] = useState("")
   const [declaredTouched, setDeclaredTouched] = useState(false)
   const [cart, setCart] = useState<CartLine[]>([])
-  const [charges, setCharges] = useState<ChargeDraft[]>([])
+  const [charges, setCharges] = useState<ChargeDraft[]>(() => chargesToDrafts([]))
   const [dirty, setDirty] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
+  const weightTimers = useRef<Record<string, number>>({})
 
   const load = useCallback(async () => {
     const [productRes, categoryRes, locationRes, supplierRes] = await Promise.all([
@@ -225,17 +219,7 @@ function Composer({
         supplierSku: line.supplier_sku,
       })),
     )
-    setCharges(
-      (chargeRes.data ?? [])
-        .filter((charge) => charge.description !== "Projected from weight")
-        .map((charge) => ({
-          key: charge.id,
-          kind: charge.kind,
-          group: charge.cost_group,
-          amount: String(charge.amount),
-          recoverable: charge.recoverable,
-        })),
-    )
+    setCharges(chargesToDrafts((chargeRes.data ?? []).filter((charge) => charge.description !== "Projected from weight")))
   }, [business.currency, business.id, shipmentId, supabase])
 
   useEffect(() => {
@@ -391,13 +375,14 @@ function Composer({
         p_declared_value: declaredTouched ? Number(declared) || 0 : null,
         p_lines: cart.map((line) => ({ product_id: line.productId, quantity: Number(line.quantity) })),
         p_charges: charges
-          .filter((charge) => Number(charge.amount) > 0)
+          .filter((charge) => charge.amount.trim() !== "" && Number(charge.amount) > 0)
           .map((charge) => ({
             kind: charge.kind,
             amount: Number(charge.amount),
             recoverable: charge.recoverable,
             cost_group: charge.group,
             source: "projected",
+            description: charge.description,
           })),
       })
       setDraftId(id)
@@ -497,140 +482,148 @@ function Composer({
             Discount and rates convert the catalog cost into {business.currency} when you save.
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-2">
-          <Field label="Shipment name">
-            <Input value={name} onChange={(event) => mark(setName)(event.target.value)} />
-          </Field>
-          <Field label="Origin country">
-            <Input value={originCountry} onChange={(event) => mark(setOriginCountry)(event.target.value)} />
-          </Field>
-          {locations.length > 0 ? (
-            <Field label="Destination warehouse">
-              <Select value={locationId} items={locationItems} onValueChange={(value) => mark(setLocationId)(value ?? "")}>
+        <CardContent className="flex flex-col gap-4">
+          <FormSection title="Shipment">
+            <div className="py-3">
+            <FieldGrid>
+            <FieldCard label="Shipment name">
+              <Input value={name} onValueChange={(value) => mark(setName)(value)} />
+            </FieldCard>
+            <FieldCard label="Origin country">
+              <Input value={originCountry} onValueChange={(value) => mark(setOriginCountry)(value)} />
+            </FieldCard>
+            <FieldCard label="Destination warehouse">
+              {locations.length > 0 ? (
+                <Select value={locationId} items={locationItems} onValueChange={(value) => mark(setLocationId)(value ?? "")}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Location" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {locations.map((location) => (
+                      <SelectItem key={location.id} value={location.id}>
+                        {location.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <div className="flex gap-2">
+                  <Input value={locationName} onValueChange={setLocationName} />
+                  <Button type="button" variant="outline" onClick={createLocation}>
+                    Add
+                  </Button>
+                </div>
+              )}
+            </FieldCard>
+            <FieldCard label="Supplier">
+              {suppliers.length > 0 ? (
+                <Select value={supplierId} items={supplierItems} onValueChange={(value) => mark(setSupplierId)(value ?? "")}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Optional supplier" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {suppliers.map((supplier) => (
+                      <SelectItem key={supplier.id} value={supplier.id}>
+                        {supplier.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <div className="flex gap-2">
+                  <Input value={supplierName} onValueChange={setSupplierName} />
+                  <Button type="button" variant="outline" onClick={createSupplier}>
+                    Add
+                  </Button>
+                </div>
+              )}
+            </FieldCard>
+            <FieldCard label="Carrier">
+              <Input value={carrier} onValueChange={(value) => mark(setCarrier)(value)} />
+            </FieldCard>
+            <FieldCard label="Tracking number">
+              <Input value={tracking} onValueChange={(value) => mark(setTracking)(value)} />
+            </FieldCard>
+            <FieldCard label="ETA">
+              <Input type="date" value={expectedOn} onValueChange={(value) => mark(setExpectedOn)(value)} />
+            </FieldCard>
+            </FieldGrid>
+            </div>
+          </FormSection>
+          <FormSection title="Pricing">
+            <div className="py-3">
+            <FieldGrid>
+            <FieldCard label="Discount %">
+              <Input
+                type="number"
+                min="0"
+                max="100"
+                step="0.001"
+                value={discount}
+                onValueChange={(value) => mark(setDiscount)(value)}
+              />
+            </FieldCard>
+            <FieldCard label="Origin currency">
+              <Input value={originCurrency} onValueChange={(value) => mark(setOriginCurrency)(value.toUpperCase())} />
+            </FieldCard>
+            <FieldCard label="Origin to USD">
+              <Input
+                type="number"
+                min="0.000001"
+                step="0.000001"
+                value={originToUsd}
+                onValueChange={(value) => mark(setOriginToUsd)(value)}
+              />
+            </FieldCard>
+            <FieldCard label={`USD to ${business.currency}`}>
+              <Input
+                type="number"
+                min="0.000001"
+                step="0.000001"
+                value={usdToBusiness}
+                onValueChange={(value) => mark(setUsdToBusiness)(value)}
+              />
+            </FieldCard>
+            <FieldCard label="Freight USD per kg">
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={freightPerKg}
+                onValueChange={(value) => mark(setFreightPerKg)(value)}
+              />
+            </FieldCard>
+            <FieldCard label="Declared value USD">
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={declaredTouched ? declared : String(declaredPreview)}
+                onValueChange={(value) => {
+                  setDeclaredTouched(true)
+                  mark(setDeclared)(value)
+                }}
+              />
+            </FieldCard>
+            <FieldCard label="Allocate landing charges">
+              <Select
+                value={method}
+                items={{ weight: "By weight", value: "By merchandise value", quantity: "By quantity" }}
+                onValueChange={(value) => mark(setMethod)((value as AllocationMethod) || "weight")}
+              >
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Location" />
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {locations.map((location) => (
-                    <SelectItem key={location.id} value={location.id}>
-                      {location.name}
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="weight">By weight</SelectItem>
+                  <SelectItem value="value">By merchandise value</SelectItem>
+                  <SelectItem value="quantity">By quantity</SelectItem>
                 </SelectContent>
               </Select>
-            </Field>
-          ) : (
-            <Field label="Destination warehouse">
-              <div className="flex gap-2">
-                <Input value={locationName} onChange={(event) => setLocationName(event.target.value)} />
-                <Button type="button" variant="outline" onClick={createLocation}>
-                  Add
-                </Button>
-              </div>
-            </Field>
-          )}
-          {suppliers.length > 0 ? (
-            <Field label="Supplier">
-              <Select value={supplierId} items={supplierItems} onValueChange={(value) => mark(setSupplierId)(value ?? "")}>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Optional supplier" />
-                </SelectTrigger>
-                <SelectContent>
-                  {suppliers.map((supplier) => (
-                    <SelectItem key={supplier.id} value={supplier.id}>
-                      {supplier.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-          ) : (
-            <Field label="Supplier">
-              <div className="flex gap-2">
-                <Input value={supplierName} onChange={(event) => setSupplierName(event.target.value)} />
-                <Button type="button" variant="outline" onClick={createSupplier}>
-                  Add
-                </Button>
-              </div>
-            </Field>
-          )}
-          <Field label="Discount %">
-            <Input
-              type="number"
-              min="0"
-              max="100"
-              step="0.001"
-              value={discount}
-              onChange={(event) => mark(setDiscount)(event.target.value)}
-            />
-          </Field>
-          <Field label="Origin currency">
-            <Input value={originCurrency} onChange={(event) => mark(setOriginCurrency)(event.target.value.toUpperCase())} />
-          </Field>
-          <Field label="Origin to USD">
-            <Input
-              type="number"
-              min="0.000001"
-              step="0.000001"
-              value={originToUsd}
-              onChange={(event) => mark(setOriginToUsd)(event.target.value)}
-            />
-          </Field>
-          <Field label={`USD to ${business.currency}`}>
-            <Input
-              type="number"
-              min="0.000001"
-              step="0.000001"
-              value={usdToBusiness}
-              onChange={(event) => mark(setUsdToBusiness)(event.target.value)}
-            />
-          </Field>
-          <Field label="Freight USD per kg">
-            <Input
-              type="number"
-              min="0"
-              step="0.01"
-              value={freightPerKg}
-              onChange={(event) => mark(setFreightPerKg)(event.target.value)}
-            />
-          </Field>
-          <Field label="Declared value USD">
-            <Input
-              type="number"
-              min="0"
-              step="0.01"
-              value={declaredTouched ? declared : String(declaredPreview)}
-              onChange={(event) => {
-                setDeclaredTouched(true)
-                mark(setDeclared)(event.target.value)
-              }}
-            />
-          </Field>
-          <Field label="Carrier">
-            <Input value={carrier} onChange={(event) => mark(setCarrier)(event.target.value)} />
-          </Field>
-          <Field label="Tracking number">
-            <Input value={tracking} onChange={(event) => mark(setTracking)(event.target.value)} />
-          </Field>
-          <Field label="ETA">
-            <Input type="date" value={expectedOn} onChange={(event) => mark(setExpectedOn)(event.target.value)} />
-          </Field>
-          <Field label="Allocate landing charges">
-            <Select
-              value={method}
-              items={{ weight: "By weight", value: "By merchandise value", quantity: "By quantity" }}
-              onValueChange={(value) => mark(setMethod)((value as AllocationMethod) || "weight")}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="weight">By weight</SelectItem>
-                <SelectItem value="value">By merchandise value</SelectItem>
-                <SelectItem value="quantity">By quantity</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
+            </FieldCard>
+            </FieldGrid>
+            </div>
+          </FormSection>
         </CardContent>
       </Card>
 
@@ -674,7 +667,7 @@ function Composer({
                   cart.map((line) => {
                     const qty = Number(line.quantity) || 0
                     const after = line.catalogCost * discountFactor(rates.discount)
-                    const gaps = catalogGaps(line.catalogCost, line.weightGrams)
+                    const gaps = catalogGaps(line.catalogCost)
                     return (
                       <TableRow key={line.productId}>
                         <TableCell>
@@ -707,7 +700,31 @@ function Composer({
                             }}
                           />
                         </TableCell>
-                        <TableCell>{line.weightGrams ? `${line.weightGrams} g` : "—"}</TableCell>
+                        <TableCell>
+                          <Input
+                            className="w-24"
+                            type="number"
+                            min="0"
+                            step="1"
+                            placeholder="grams"
+                            aria-label={`Unit weight for ${line.name}`}
+                            value={line.weightGrams ? String(line.weightGrams) : ""}
+                            onValueChange={(value) => {
+                              const grams = value.trim() === "" ? 0 : Number(value)
+                              if (!Number.isFinite(grams) || grams < 0) return
+                              setDirty(true)
+                              setCart((current) =>
+                                current.map((item) =>
+                                  item.productId === line.productId ? { ...item, weightGrams: grams } : item,
+                                ),
+                              )
+                              window.clearTimeout(weightTimers.current[line.productId])
+                              weightTimers.current[line.productId] = window.setTimeout(() => {
+                                void saveWeight(line.productId, grams > 0 ? grams : null)
+                              }, 400)
+                            }}
+                          />
+                        </TableCell>
                         <TableCell>{quantity(qty * line.weightGrams)} g</TableCell>
                         <TableCell>{money(qty * after, originCurrency || business.currency)}</TableCell>
                         <TableCell>{money(qty * after * rates.originToUsd, "USD")}</TableCell>
@@ -745,6 +762,7 @@ function Composer({
         </CardContent>
       </Card>
 
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
       <Card>
         <CardHeader>
           <CardTitle>Extra projected charges</CardTitle>
@@ -753,109 +771,35 @@ function Composer({
             stays out of landing cost.
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          {charges.map((charge) => (
-            <div key={charge.key} className="grid gap-2 md:grid-cols-[1fr_1fr_8rem_auto_auto]">
-              <Select
-                value={charge.kind}
-                items={Object.fromEntries(chargeKinds.map((kind) => [kind, kind]))}
-                onValueChange={(value) => {
-                  setDirty(true)
-                  setCharges((current) =>
-                    current.map((item) => (item.key === charge.key ? { ...item, kind: value || item.kind } : item)),
-                  )
-                }}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {chargeKinds.map((kind) => (
-                    <SelectItem key={kind} value={kind}>
-                      {kind}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={charge.group}
-                items={{
-                  freight: "Freight",
-                  shipping_company: "Shipping company",
-                  clearance: "Clearance",
-                  other: "Other",
-                }}
-                onValueChange={(value) => {
-                  setDirty(true)
-                  setCharges((current) =>
-                    current.map((item) =>
-                      item.key === charge.key ? { ...item, group: value || item.group } : item,
-                    ),
-                  )
-                }}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="freight">Freight</SelectItem>
-                  <SelectItem value="shipping_company">Shipping company</SelectItem>
-                  <SelectItem value="clearance">Clearance</SelectItem>
-                  <SelectItem value="other">Other</SelectItem>
-                </SelectContent>
-              </Select>
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={charge.amount}
-                onChange={(event) => {
-                  setDirty(true)
-                  setCharges((current) =>
-                    current.map((item) =>
-                      item.key === charge.key ? { ...item, amount: event.target.value } : item,
-                    ),
-                  )
-                }}
-              />
-              <div className="flex items-center gap-2">
-                <Switch
-                  checked={charge.recoverable}
-                  onCheckedChange={(checked) => {
-                    setDirty(true)
-                    setCharges((current) =>
-                      current.map((item) =>
-                        item.key === charge.key ? { ...item, recoverable: checked } : item,
-                      ),
-                    )
-                  }}
-                />
-                <span className="text-sm text-muted-foreground">Recoverable</span>
+        <CardContent className="flex flex-col gap-4">
+          {chargeGroups
+            .filter(([group]) => charges.some((charge) => charge.group === group))
+            .map(([group]) => (
+            <FormSection key={group} title={groupLabel(group)}>
+              <div className="py-3">
+              <FieldGrid>
+              {charges
+                .filter((charge) => charge.group === group)
+                .map((charge) => (
+                  <FieldCard key={charge.key} label={charge.description} hint={charge.recoverable ? "Recoverable" : undefined}>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={charge.amount}
+                      onValueChange={(value) => {
+                        setDirty(true)
+                        setCharges((current) =>
+                          current.map((item) => (item.key === charge.key ? { ...item, amount: value } : item)),
+                        )
+                      }}
+                    />
+                  </FieldCard>
+                ))}
+              </FieldGrid>
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => {
-                  setDirty(true)
-                  setCharges((current) => current.filter((item) => item.key !== charge.key))
-                }}
-              >
-                Remove
-              </Button>
-            </div>
+            </FormSection>
           ))}
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() =>
-              setCharges((current) => [
-                ...current,
-                { key: crypto.randomUUID(), kind: "insurance", group: "other", amount: "", recoverable: false },
-              ])
-            }
-          >
-            Add charge
-          </Button>
         </CardContent>
       </Card>
 
@@ -909,6 +853,7 @@ function Composer({
           </div>
         </CardContent>
       </Card>
+      </div>
     </div>
   )
 }
@@ -924,11 +869,3 @@ function roundDeclared(
   }, 0)
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Label>{label}</Label>
-      {children}
-    </div>
-  )
-}

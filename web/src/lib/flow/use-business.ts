@@ -18,7 +18,6 @@ const uuidPattern =
 
 const businessNames: Record<string, string> = {
   demo: "Dreams Pvt Ltd",
-  north: "Juicify Pvt Ltd",
 }
 
 const demoAccount = {

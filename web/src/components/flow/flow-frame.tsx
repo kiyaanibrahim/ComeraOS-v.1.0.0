@@ -6,7 +6,7 @@ import { type BusinessRecord, type FlowClient, useBusiness } from "@/lib/flow/us
 
 const steps = [
   ["Products", "products"],
-  ["Buying", "procurement"],
+  ["Inbound shipments", "procurement"],
   ["Inventory", "inventory"],
   ["POS", "pos"],
 ] as const
@@ -30,21 +30,32 @@ export function FlowFrame({
   businessKey,
   title,
   description,
+  aside,
   children,
 }: {
   businessKey: string
   title: string
   description: string
+  aside?: React.ReactNode
   children: (ctx: { business: BusinessRecord; supabase: FlowClient }) => React.ReactNode
 }) {
   const flow = useBusiness(businessKey)
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2">
-        <h1 className="font-heading text-xl font-medium tracking-tight">{title}</h1>
-        <p className="text-sm text-muted-foreground">{description}</p>
-        <Chain businessKey={businessKey} />
+      <div
+        className={
+          aside
+            ? "flex flex-col gap-4 border-b pb-6 xl:flex-row xl:items-end xl:justify-between"
+            : "flex flex-col gap-2"
+        }
+      >
+        <div className="flex flex-col gap-2">
+          <h1 className="font-heading text-xl font-medium tracking-tight">{title}</h1>
+          <p className="text-sm text-muted-foreground">{description}</p>
+          <Chain businessKey={businessKey} />
+        </div>
+        {aside}
       </div>
       {!flow.ready ? <div className="h-40 animate-pulse rounded-xl bg-muted" /> : null}
       {flow.ready && flow.error ? (

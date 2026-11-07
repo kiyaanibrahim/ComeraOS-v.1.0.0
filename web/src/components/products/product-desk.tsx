@@ -22,6 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { autoSku } from "@/lib/flow/codes"
 import { money } from "@/lib/flow/format"
 import type { BusinessRecord, FlowClient } from "@/lib/flow/use-business"
 
@@ -55,15 +56,18 @@ function ProductEditor({ business, supabase }: { business: BusinessRecord; supab
   const [rows, setRows] = useState<ProductRow[]>([])
   const [message, setMessage] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
-  const [sku, setSku] = useState("")
+  const [productId, setProductId] = useState(() => crypto.randomUUID())
+  const [sku, setSku] = useState(() => autoSku(productId))
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [price, setPrice] = useState("0")
   const [cost, setCost] = useState("0")
   const [weight, setWeight] = useState("")
-  const [supplierSku, setSupplierSku] = useState("")
+  const [supplierSku, setSupplierSku] = useState(() => autoSku(productId))
+  const [supplierTouched, setSupplierTouched] = useState(false)
   const [packSize, setPackSize] = useState("")
   const [track, setTrack] = useState(true)
+  const generatedSku = autoSku(productId)
 
   const load = useCallback(async () => {
     const { data, error } = await supabase
@@ -83,15 +87,17 @@ function ProductEditor({ business, supabase }: { business: BusinessRecord; supab
     event.preventDefault()
     setPending(true)
     setMessage(null)
+    const nextSku = sku.trim() || generatedSku
     const { error } = await supabase.from("products").insert({
+      id: productId,
       business_id: business.id,
-      sku: sku.trim(),
+      sku: nextSku,
       name: name.trim(),
       description: description.trim() || null,
       price: Number(price) || 0,
       cost: Number(cost) || 0,
       weight_grams: weight.trim() === "" ? null : Number(weight),
-      supplier_sku: supplierSku.trim() || null,
+      supplier_sku: (supplierTouched ? supplierSku.trim() : "") || nextSku,
       pack_size: packSize.trim() || null,
       track_inventory: track,
       status: "active",
@@ -101,13 +107,16 @@ function ProductEditor({ business, supabase }: { business: BusinessRecord; supab
       setMessage(error.message)
       return
     }
-    setSku("")
+    const nextId = crypto.randomUUID()
+    setProductId(nextId)
+    setSku(autoSku(nextId))
     setName("")
     setDescription("")
     setPrice("0")
     setCost("0")
     setWeight("")
-    setSupplierSku("")
+    setSupplierSku(autoSku(nextId))
+    setSupplierTouched(false)
     setPackSize("")
     setTrack(true)
     await load()
@@ -118,12 +127,21 @@ function ProductEditor({ business, supabase }: { business: BusinessRecord; supab
       <Card>
         <CardHeader>
           <CardTitle>New product</CardTitle>
-          <CardDescription>SKU, sell price, and catalog cost.</CardDescription>
+          <CardDescription>SKU and supplier SKU are filled in. Change either field to use your own code.</CardDescription>
         </CardHeader>
         <CardContent>
           <form className="grid gap-3 md:grid-cols-2" onSubmit={create}>
             <Field id="sku" label="SKU">
-              <Input id="sku" required value={sku} onChange={(event) => setSku(event.target.value)} />
+              <Input
+                id="sku"
+                required
+                value={sku}
+                onChange={(event) => {
+                  const next = event.target.value.trim() === "" ? generatedSku : event.target.value
+                  setSku(next)
+                  if (!supplierTouched) setSupplierSku(next)
+                }}
+              />
             </Field>
             <Field id="name" label="Name">
               <Input id="name" required value={name} onChange={(event) => setName(event.target.value)} />
@@ -168,7 +186,14 @@ function ProductEditor({ business, supabase }: { business: BusinessRecord; supab
               />
             </Field>
             <Field id="supplier-sku" label="Supplier SKU">
-              <Input id="supplier-sku" value={supplierSku} onChange={(event) => setSupplierSku(event.target.value)} />
+              <Input
+                id="supplier-sku"
+                value={supplierSku}
+                onChange={(event) => {
+                  setSupplierTouched(true)
+                  setSupplierSku(event.target.value.trim() === "" ? sku.trim() || generatedSku : event.target.value)
+                }}
+              />
             </Field>
             <Field id="pack-size" label="Pack size">
               <Input id="pack-size" value={packSize} onChange={(event) => setPackSize(event.target.value)} />

@@ -40,3 +40,23 @@ export const chargeGroups = [
 export function groupLabel(group: string) {
   return chargeGroups.find((item) => item[0] === group)?.[1] ?? group
 }
+
+export const actualChargeLines = [
+  { group: "freight", kind: "freight", description: "Freight", recoverable: false },
+  {
+    group: "shipping_company",
+    kind: "brokerage",
+    description: "Air cargo, delivery order, or bill of lading",
+    recoverable: false,
+  },
+  { group: "shipping_company", kind: "other", description: "Handling", recoverable: false },
+  { group: "shipping_company", kind: "tax", description: "GST", recoverable: true },
+  { group: "clearance", kind: "brokerage", description: "Clearance documentation", recoverable: false },
+  { group: "clearance", kind: "other", description: "Form filling", recoverable: false },
+  { group: "clearance", kind: "other", description: "Clearance handling", recoverable: false },
+  { group: "clearance", kind: "duty", description: "Duty", recoverable: false },
+  { group: "clearance", kind: "other", description: "Pickup", recoverable: false },
+  { group: "clearance", kind: "other", description: "MACL", recoverable: false },
+  { group: "clearance", kind: "other", description: "Storage", recoverable: false },
+  { group: "clearance", kind: "other", description: "Other", recoverable: false },
+] as const

@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useCallback, useEffect, useState } from "react"
 
 import { FlowFrame } from "@/components/flow/flow-frame"
+import { ProcurementNav } from "@/components/procurement/procurement-nav"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -36,6 +37,7 @@ export function ShipmentDrafts({ businessKey }: { businessKey: string }) {
       businessKey={businessKey}
       title="Draft shipments"
       description="Purchase plans that have not been converted into an active shipment."
+      aside={<ProcurementNav businessKey={businessKey} current="drafts" />}
     >
       {({ business, supabase }) => <DraftList business={business} businessKey={businessKey} supabase={supabase} />}
     </FlowFrame>

@@ -38,7 +38,7 @@ export function coreNav(businessId: string): NavSection[] {
     {
       title: "Procurement",
       items: [
-        { label: "Buying", href: `${base}/procurement` },
+        { label: "Inbound shipments", href: `${base}/procurement` },
         { label: "Draft shipments", href: `${base}/procurement/drafts` },
         { label: "Shipment tracker", href: `${base}/shipments` },
         { label: "Landing cost", href: `${base}/procurement/landing` },

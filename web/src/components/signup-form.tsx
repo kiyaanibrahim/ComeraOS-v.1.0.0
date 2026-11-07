@@ -54,10 +54,10 @@ export function SignupForm({ plan }: { plan?: string }) {
     setMessage(null)
     const supabase = createClient()
     const { error } = await supabase.auth.signInWithOAuth({
-      provider: provider === "google" ? "custom:google" : provider,
+      provider: "custom:google",
       options: {
         redirectTo: `${window.location.origin}/auth/callback?next=/app`,
-        queryParams: provider === "google" ? { prompt: "select_account" } : undefined,
+        queryParams: { prompt: "select_account" },
       },
     })
     if (error) {

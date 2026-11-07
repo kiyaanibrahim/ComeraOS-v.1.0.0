@@ -37,11 +37,8 @@ export type CatalogProduct = {
   pack_size: string | null
 }
 
-export function catalogGaps(cost: number, weightGrams: number | null) {
-  const notes: string[] = []
-  if (cost <= 0) notes.push("Supplier cost is missing.")
-  if (!weightGrams || weightGrams <= 0) notes.push("Unit weight is missing.")
-  return notes
+export function catalogGaps(cost: number) {
+  return cost <= 0 ? ["Supplier cost is missing."] : []
 }
 
 export function ProductPicker({
@@ -161,8 +158,7 @@ export function ProductPicker({
                 visible.map((product) => {
                   const weightValue =
                     weights[product.id] ?? (product.weight_grams ? String(product.weight_grams) : "")
-                  const grams = gramsFrom(weights[product.id], product.weight_grams)
-                  const gaps = catalogGaps(Number(product.cost), grams)
+                  const gaps = catalogGaps(Number(product.cost))
                   return (
                     <TableRow key={product.id}>
                       <TableCell>
@@ -190,8 +186,7 @@ export function ProductPicker({
                           placeholder="grams"
                           aria-label={`Unit weight for ${product.name}`}
                           value={weightValue}
-                          onChange={(event) => {
-                            const value = event.target.value
+                          onValueChange={(value) => {
                             setWeights((current) => ({ ...current, [product.id]: value }))
                             queueWeight(product.id, value, product.weight_grams)
                           }}

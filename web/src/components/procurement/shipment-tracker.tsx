@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useCallback, useEffect, useState } from "react"
 
 import { FlowFrame } from "@/components/flow/flow-frame"
+import { ProcurementNav } from "@/components/procurement/procurement-nav"
 import { Badge } from "@/components/ui/badge"
 import {
   Card,
@@ -44,6 +45,7 @@ export function ShipmentTracker({ businessKey }: { businessKey: string }) {
       businessKey={businessKey}
       title="Shipment tracker"
       description="Inbound shipments before they are received. Pipeline cost is the supplier total, before landing charges."
+      aside={<ProcurementNav businessKey={businessKey} current="tracker" />}
     >
       {({ business, supabase }) => <Tracker business={business} businessKey={businessKey} supabase={supabase} />}
     </FlowFrame>

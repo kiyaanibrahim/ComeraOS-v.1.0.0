@@ -15,9 +15,10 @@ import {
   SidebarHeader,
   SidebarRail,
 } from "@/components/ui/sidebar"
-import { businesses, getBusiness } from "@/lib/businesses"
+import { businesses, getBusiness, presentBusiness } from "@/lib/businesses"
 import { navForShell } from "@/lib/nav"
 import { resolveShell } from "@/lib/shell"
+import { createClient } from "@/lib/supabase/client"
 import {
   BoxesIcon,
   Building2Icon,
@@ -62,7 +63,21 @@ function SidebarNavFallback() {
 function SidebarNav() {
   const pathname = usePathname()
   const shell = resolveShell(pathname)
-  const business = shell.businessId ? getBusiness(shell.businessId) : null
+  const [listed, setListed] = React.useState(businesses)
+  const business = shell.businessId
+    ? listed.find((item) => item.id === shell.businessId) ?? getBusiness(shell.businessId)
+    : null
+
+  React.useEffect(() => {
+    const supabase = createClient()
+    void supabase
+      .from("businesses")
+      .select("name, slug")
+      .order("name")
+      .then(({ data }) => {
+        if (data && data.length > 0) setListed(data.map((row) => presentBusiness(row)))
+      })
+  }, [])
   const sections =
     shell.layer === "home" || shell.layer === "settings" || shell.layer === "admin"
       ? navForShell(shell)
@@ -110,7 +125,7 @@ function SidebarNav() {
         <LayerSwitcher
           layer={shell.layer}
           business={business}
-          businesses={businesses}
+          businesses={listed}
           pathname={pathname}
         />
       </SidebarHeader>

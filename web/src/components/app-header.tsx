@@ -12,6 +12,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb"
+import { ThemeToggle } from "@/components/theme-toggle"
 import { Separator } from "@/components/ui/separator"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import { matchNav, navForShell } from "@/lib/nav"
@@ -57,7 +58,7 @@ function HeaderBreadcrumb() {
 
 export function AppHeader() {
   return (
-    <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
+    <header className="flex h-16 shrink-0 items-center justify-between gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
       <div className="flex items-center gap-2 px-4">
         <SidebarTrigger className="-ml-1" />
         <Separator
@@ -67,6 +68,9 @@ export function AppHeader() {
         <Suspense fallback={<div className="h-4 w-28 rounded bg-muted" />}>
           <HeaderBreadcrumb />
         </Suspense>
+      </div>
+      <div className="flex items-center px-4">
+        <ThemeToggle />
       </div>
     </header>
   )

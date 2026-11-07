@@ -2,7 +2,7 @@
   "routes": {
     "/app": { "tables": ["businesses"] },
     "/app/[businessId]": { "tables": ["businesses", "orders"] },
-    "/app/[businessId]/pos": { "tables": ["products", "inventory_balances", "inventory_movements", "batches", "locations", "orders", "order_lines"] },
+    "/app/[businessId]/pos": { "tables": ["products", "inventory_balances", "inventory_movements", "batches", "locations", "registers", "register_sessions", "payments", "orders", "order_lines"] },
     "/app/[businessId]/orders": { "tables": ["orders", "order_lines"] },
     "/app/[businessId]/orders/drafts": { "tables": ["orders", "order_lines"] },
     "/app/[businessId]/quotations": { "tables": ["quotations", "quotation_lines"] },

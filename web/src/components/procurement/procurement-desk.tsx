@@ -41,7 +41,7 @@ export function ProcurementDesk({ businessKey }: { businessKey: string }) {
   return (
     <FlowFrame
       businessKey={businessKey}
-      title="Buying"
+      title="Inbound shipments"
       description="Build an inbound shipment from products. Delivering it posts stock for POS."
     >
       {({ business, supabase }) => (

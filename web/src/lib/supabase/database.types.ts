@@ -1171,7 +1171,10 @@ export type Database = {
           customer_id: string | null
           id: string
           location_id: string | null
+          notes: string | null
           number: string
+          register_id: string | null
+          register_session_id: string | null
           source: string
           status: string
           subtotal: number
@@ -1186,7 +1189,10 @@ export type Database = {
           customer_id?: string | null
           id?: string
           location_id?: string | null
+          notes?: string | null
           number: string
+          register_id?: string | null
+          register_session_id?: string | null
           source?: string
           status?: string
           subtotal?: number
@@ -1201,7 +1207,10 @@ export type Database = {
           customer_id?: string | null
           id?: string
           location_id?: string | null
+          notes?: string | null
           number?: string
+          register_id?: string | null
+          register_session_id?: string | null
           source?: string
           status?: string
           subtotal?: number
@@ -1231,6 +1240,20 @@ export type Database = {
             referencedRelation: "locations"
             referencedColumns: ["id", "business_id"]
           },
+          {
+            foreignKeyName: "orders_register_id_business_id_fkey"
+            columns: ["register_id", "business_id"]
+            isOneToOne: false
+            referencedRelation: "registers"
+            referencedColumns: ["id", "business_id"]
+          },
+          {
+            foreignKeyName: "orders_register_session_id_business_id_fkey"
+            columns: ["register_session_id", "business_id"]
+            isOneToOne: false
+            referencedRelation: "register_sessions"
+            referencedColumns: ["id", "business_id"]
+          },
         ]
       }
       payments: {
@@ -1238,39 +1261,51 @@ export type Database = {
           amount: number
           bill_id: string | null
           business_id: string
+          change_amount: number | null
           created_at: string
           currency: string
           external_ref: string | null
           id: string
+          method: string
           order_id: string | null
           provider: string | null
+          register_session_id: string | null
           status: string
+          tendered: number | null
           updated_at: string
         }
         Insert: {
           amount: number
           bill_id?: string | null
           business_id: string
+          change_amount?: number | null
           created_at?: string
           currency?: string
           external_ref?: string | null
           id?: string
+          method?: string
           order_id?: string | null
           provider?: string | null
+          register_session_id?: string | null
           status?: string
+          tendered?: number | null
           updated_at?: string
         }
         Update: {
           amount?: number
           bill_id?: string | null
           business_id?: string
+          change_amount?: number | null
           created_at?: string
           currency?: string
           external_ref?: string | null
           id?: string
+          method?: string
           order_id?: string | null
           provider?: string | null
+          register_session_id?: string | null
           status?: string
+          tendered?: number | null
           updated_at?: string
         }
         Relationships: [
@@ -1293,6 +1328,13 @@ export type Database = {
             columns: ["order_id", "business_id"]
             isOneToOne: false
             referencedRelation: "orders"
+            referencedColumns: ["id", "business_id"]
+          },
+          {
+            foreignKeyName: "payments_register_session_id_business_id_fkey"
+            columns: ["register_session_id", "business_id"]
+            isOneToOne: false
+            referencedRelation: "register_sessions"
             referencedColumns: ["id", "business_id"]
           },
         ]
@@ -1855,34 +1897,49 @@ export type Database = {
       register_sessions: {
         Row: {
           business_id: string
+          cash_difference: number | null
           closed_at: string | null
           closing_cash: number | null
+          closing_count: Json | null
+          counted_cash: number | null
+          expected_cash: number | null
           id: string
           opened_at: string
           opened_by: string | null
           opening_cash: number
+          opening_count: Json
           register_id: string
           status: string
         }
         Insert: {
           business_id: string
+          cash_difference?: number | null
           closed_at?: string | null
           closing_cash?: number | null
+          closing_count?: Json | null
+          counted_cash?: number | null
+          expected_cash?: number | null
           id?: string
           opened_at?: string
           opened_by?: string | null
           opening_cash?: number
+          opening_count?: Json
           register_id: string
           status?: string
         }
         Update: {
           business_id?: string
+          cash_difference?: number | null
           closed_at?: string | null
           closing_cash?: number | null
+          closing_count?: Json | null
+          counted_cash?: number | null
+          expected_cash?: number | null
           id?: string
           opened_at?: string
           opened_by?: string | null
           opening_cash?: number
+          opening_count?: Json
           register_id?: string
           status?: string
         }
@@ -1902,30 +1959,33 @@ export type Database = {
           created_at: string
           device_label: string | null
           id: string
-          location_id: string | null
+          location_id: string
           name: string
           status: string
           updated_at: string
+          warehouse_id: string
         }
         Insert: {
           business_id: string
           created_at?: string
           device_label?: string | null
           id?: string
-          location_id?: string | null
+          location_id: string
           name: string
           status?: string
           updated_at?: string
+          warehouse_id: string
         }
         Update: {
           business_id?: string
           created_at?: string
           device_label?: string | null
           id?: string
-          location_id?: string | null
+          location_id?: string
           name?: string
           status?: string
           updated_at?: string
+          warehouse_id?: string
         }
         Relationships: [
           {
@@ -1938,6 +1998,13 @@ export type Database = {
           {
             foreignKeyName: "registers_location_id_business_id_fkey"
             columns: ["location_id", "business_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id", "business_id"]
+          },
+          {
+            foreignKeyName: "registers_warehouse_id_business_id_fkey"
+            columns: ["warehouse_id", "business_id"]
             isOneToOne: false
             referencedRelation: "locations"
             referencedColumns: ["id", "business_id"]
@@ -2428,9 +2495,40 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      complete_pos_sale: {
-        Args: { p_business_id: string; p_lines: Json; p_location_id: string }
+      close_register_session: {
+        Args: {
+          p_business_id: string
+          p_closing_count?: Json
+          p_counted_cash: number
+          p_session_id: string
+        }
         Returns: Json
+      }
+      complete_pos_sale: {
+        Args: {
+          p_business_id: string
+          p_lines: Json
+          p_method: string
+          p_notes?: string
+          p_register_id: string
+          p_tendered?: number
+        }
+        Returns: Json
+      }
+      confirm_shipment_actuals: {
+        Args: {
+          p_batch_references: Json
+          p_chargeable_weight_kg?: number
+          p_charges: Json
+          p_freight_per_kg?: number
+          p_package_count: number
+          p_shipment_id: string
+        }
+        Returns: undefined
+      }
+      convert_shipment_draft: {
+        Args: { p_shipment_id: string }
+        Returns: undefined
       }
       create_inbound_shipment: {
         Args: {
@@ -2446,8 +2544,61 @@ export type Database = {
         }
         Returns: string
       }
+      delete_shipment_draft: {
+        Args: { p_shipment_id: string }
+        Returns: undefined
+      }
+      duplicate_shipment: { Args: { p_shipment_id: string }; Returns: string }
+      open_register_session: {
+        Args: {
+          p_business_id: string
+          p_opening_cash: number
+          p_opening_count?: Json
+          p_register_id: string
+        }
+        Returns: Json
+      }
       receive_shipment: {
         Args: { p_lines?: Json; p_shipment_id: string }
+        Returns: undefined
+      }
+      save_shipment_actuals: {
+        Args: {
+          p_batch_references: Json
+          p_chargeable_weight_kg?: number
+          p_charges: Json
+          p_freight_per_kg?: number
+          p_package_count: number
+          p_shipment_id: string
+        }
+        Returns: undefined
+      }
+      save_shipment_draft: {
+        Args: {
+          p_allocation_method?: string
+          p_business_id: string
+          p_carrier?: string
+          p_chargeable_weight_kg?: number
+          p_charges?: Json
+          p_declared_value?: number
+          p_discount_percent?: number
+          p_expected_on?: string
+          p_freight_per_kg?: number
+          p_lines: Json
+          p_location_id: string
+          p_name?: string
+          p_origin_country?: string
+          p_origin_currency?: string
+          p_origin_to_usd_rate?: number
+          p_shipment_id: string
+          p_supplier_id?: string
+          p_tracking_number?: string
+          p_usd_to_business_rate?: number
+        }
+        Returns: string
+      }
+      set_shipment_stage: {
+        Args: { p_note?: string; p_shipment_id: string; p_stage: string }
         Returns: undefined
       }
       set_shipment_status: {

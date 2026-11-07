@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { FlowFrame } from "@/components/flow/flow-frame"
+import { chargesToDrafts, type ChargeDraft } from "@/components/procurement/charge-drafts"
+import { FieldCard, FieldGrid, FormSection, ValueCard } from "@/components/procurement/form-row"
+import { ProcurementNav } from "@/components/procurement/procurement-nav"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -28,10 +31,18 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { autoBatchReference } from "@/lib/flow/codes"
 import { margin, suggestedPackages } from "@/lib/flow/cost"
 import { money, quantity, statusLabel } from "@/lib/flow/format"
-import { nextStage, shipmentStages, stageDetail, stageIndex, stageLabel } from "@/lib/flow/procurement"
+import {
+  chargeGroups,
+  groupLabel,
+  nextStage,
+  shipmentStages,
+  stageDetail,
+  stageIndex,
+  stageLabel,
+} from "@/lib/flow/procurement"
 import { callRpc } from "@/lib/flow/rpc"
 import type { BusinessRecord, FlowClient } from "@/lib/flow/use-business"
 
@@ -79,17 +90,99 @@ type Line = {
   position: number
 }
 
-type Charge = {
-  id: string
-  kind: string
-  amount: number
-  recoverable: boolean
-  description: string | null
-  cost_group: string
-  source: string
+type EventRow = { id: string; status: string; stage: string | null; note: string | null; occurred_at: string }
+
+const phases = [
+  {
+    title: "Supplier Phase",
+    note: "Supplier planning to dispatch",
+    duration: "Processing Duration",
+    from: "order_placed",
+    to: "at_forwarder",
+    rows: [
+      { label: "Date Order Placed", stage: "order_placed" },
+      { label: "Date Confirmed", stage: "" },
+      { label: "Date Shipped", stage: "" },
+    ],
+  },
+  {
+    title: "Forwarder Phase",
+    note: "Forwarder warehouse handling",
+    duration: "Warehouse Hold Duration",
+    from: "at_forwarder",
+    to: "handed_to_freight",
+    rows: [
+      { label: "Date Received", stage: "at_forwarder" },
+      { label: "Date Forwarded", stage: "handed_to_freight" },
+    ],
+  },
+  {
+    title: "Freight Phase",
+    note: "Air cargo movement",
+    duration: "Transit Duration",
+    from: "handed_to_freight",
+    to: "arrived",
+    rows: [
+      { label: "Date Departed", stage: "handed_to_freight" },
+      { label: "Date Arrived", stage: "arrived" },
+    ],
+  },
+  {
+    title: "Customs Phase",
+    note: "Customs and clearing",
+    duration: "Customs Duration",
+    from: "customs",
+    to: "cleared",
+    rows: [
+      { label: "Date Processing Started", stage: "customs" },
+      { label: "Date Cleared", stage: "cleared" },
+    ],
+  },
+  {
+    title: "Final Delivery",
+    note: "Warehouse intake",
+    duration: "Total End-to-End Duration",
+    from: "order_placed",
+    to: "stock_added",
+    rows: [
+      { label: "Date Received", stage: "received" },
+      { label: "Date Stock Added to Inventory", stage: "stock_added" },
+    ],
+  },
+] as const
+
+function chargeLabel(description: string) {
+  const labels: Record<string, string> = {
+    "Air cargo, delivery order, or bill of lading": "Air Cargo / D.O / B.L Charges",
+    Handling: "Shipping Company Handling",
+    "Clearance documentation": "Clearance Documentation",
+    "Form filling": "Clearance Form Filling",
+    "Clearance handling": "Clearance Handling",
+  }
+  return labels[description] ?? description
 }
 
-type EventRow = { id: string; status: string; stage: string | null; note: string | null; occurred_at: string }
+function moneyStatus(amount: string, assumed: string) {
+  if (amount.trim() === "" || Number.isNaN(Number(amount))) return assumed.trim() ? "Pending" : "Missing"
+  if (assumed.trim() !== "" && Number(amount) === Number(assumed)) return "Projected"
+  return "Actual"
+}
+
+function rateStatus(value: string, assumed: string) {
+  if (value.trim() === "" || Number.isNaN(Number(value))) return "Pending"
+  if (assumed.trim() !== "" && Number(value) === Number(assumed)) return "Baseline"
+  if (Number(value) === 0) return "Pending"
+  return "Actual"
+}
+
+function packageStatus(value: string) {
+  if (value.trim() === "" || Number.isNaN(Number(value)) || Number(value) < 0) return "Pending"
+  return "Actual"
+}
+
+function StatusBadge({ status }: { status: string }) {
+  return <Badge variant={status === "Actual" ? "positive" : "secondary"}>{status}</Badge>
+}
 
 export function ShipmentDetail({
   businessKey,
@@ -101,8 +194,9 @@ export function ShipmentDetail({
   return (
     <FlowFrame
       businessKey={businessKey}
-      title="Shipment"
-      description="Track the stage, record actual charges, then confirm to post inventory."
+      title="Procurement"
+      description="Procurement now runs as a governed shipment and draft domain linked to SKU truth. Inventory intake is applied only at the final received state, with status progression enforced in sequence."
+      aside={<ProcurementNav businessKey={businessKey} current="tracker" />}
     >
       {({ business, supabase }) => (
         <Detail business={business} businessKey={businessKey} shipmentId={shipmentId} supabase={supabase} />
@@ -125,22 +219,19 @@ function Detail({
   const router = useRouter()
   const [shipment, setShipment] = useState<Shipment | null>(null)
   const [lines, setLines] = useState<Line[]>([])
-  const [charges, setCharges] = useState<Charge[]>([])
   const [events, setEvents] = useState<EventRow[]>([])
   const [locationName, setLocationName] = useState("")
   const [supplierName, setSupplierName] = useState("")
-  const [tracked, setTracked] = useState<Record<string, boolean>>({})
   const [receiveQty, setReceiveQty] = useState<Record<string, string>>({})
   const [batchRefs, setBatchRefs] = useState<Record<string, string>>({})
   const [packageCount, setPackageCount] = useState("")
   const [chargeable, setChargeable] = useState("")
   const [freightRate, setFreightRate] = useState("")
-  const [freightTotal, setFreightTotal] = useState("")
-  const [shippingTotal, setShippingTotal] = useState("")
-  const [clearanceTotal, setClearanceTotal] = useState("")
+  const [assumedFreight, setAssumedFreight] = useState("")
+  const [draftCharges, setDraftCharges] = useState<ChargeDraft[]>(() => chargesToDrafts([]))
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [timelineOpen, setTimelineOpen] = useState(false)
-  const [compositionOpen, setCompositionOpen] = useState(false)
+  const [compositionOpen, setCompositionOpen] = useState(true)
   const [message, setMessage] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
 
@@ -162,7 +253,7 @@ function Detail({
       return
     }
     const row = shipmentRes.data
-    const [lineRes, chargeRes, eventRes, productRes, locationRes, supplierRes] = await Promise.all([
+    const [lineRes, chargeRes, eventRes, locationRes, supplierRes] = await Promise.all([
       supabase
         .from("shipment_lines")
         .select(
@@ -179,7 +270,6 @@ function Detail({
         .select("id, status, stage, note, occurred_at")
         .eq("shipment_id", shipmentId)
         .order("occurred_at"),
-      supabase.from("products").select("id, track_inventory").eq("business_id", business.id),
       row.location_id
         ? supabase.from("locations").select("name").eq("id", row.location_id).maybeSingle()
         : Promise.resolve({ data: null, error: null }),
@@ -189,22 +279,60 @@ function Detail({
     ])
     setShipment(row)
     setLines(lineRes.data ?? [])
-    setCharges(chargeRes.data ?? [])
     setEvents(eventRes.data ?? [])
     setLocationName(locationRes.data?.name ?? "")
     setSupplierName(supplierRes.data?.name ?? "")
-    setTracked(Object.fromEntries((productRes.data ?? []).map((product) => [product.id, product.track_inventory])))
+    const previousRes = await supabase
+      .from("shipments")
+      .select("id, freight_per_kg, created_at")
+      .eq("business_id", business.id)
+      .eq("direction", "inbound")
+      .neq("id", shipmentId)
+      .order("created_at", { ascending: false })
+      .limit(8)
+    const previousRows = previousRes.data ?? []
+    const previousCharges = previousRows.length
+      ? (
+          await supabase
+            .from("shipment_charges")
+            .select("id, shipment_id, kind, amount, recoverable, description, cost_group, source")
+            .in(
+              "shipment_id",
+              previousRows.map((item) => item.id),
+            )
+        ).data ?? []
+      : []
+    const previous = previousRows.find((item) =>
+      previousCharges.some((charge) => charge.shipment_id === item.id) || Number(item.freight_per_kg) > 0,
+    )
+    const assumedRows = previous
+      ? previousCharges.filter((charge) => charge.shipment_id === previous.id)
+      : []
+    const assumedRate = previous && Number(previous.freight_per_kg) > 0 ? String(previous.freight_per_kg) : ""
+    const ownCharges = chargeRes.data ?? []
+    const projected = chargesToDrafts(assumedRows)
+    const drafts = chargesToDrafts(ownCharges).map((line) => {
+      const assumed = projected.find((item) => item.key === line.key)?.amount ?? ""
+      const savedActual = line.source === "actual" && line.amount.trim() !== ""
+      if (savedActual) return { ...line, assumed }
+      if (assumed) return { ...line, amount: assumed, assumed, source: "projected" }
+      return { ...line, assumed }
+    })
     setPackageCount(row.package_count_actual === null ? "" : String(row.package_count_actual))
     setChargeable(row.chargeable_weight_kg === null ? "" : String(row.chargeable_weight_kg))
-    setFreightRate(String(row.freight_per_kg ?? 0))
-    const actuals = chargeRes.data ?? []
-    setFreightTotal(String(sumGroup(actuals, "freight")))
-    setShippingTotal(String(sumGroup(actuals, "shipping_company")))
-    setClearanceTotal(String(sumGroup(actuals, "clearance")))
+    setAssumedFreight(assumedRate)
+    setFreightRate(
+      assumedRate && (Number(row.freight_per_kg) === 0 || Number(row.freight_per_kg) === Number(assumedRate))
+        ? assumedRate
+        : Number(row.freight_per_kg) > 0
+          ? String(row.freight_per_kg)
+          : assumedRate || "0",
+    )
+    setDraftCharges(drafts)
     setBatchRefs((current) => {
       const next = { ...current }
       for (const line of lineRes.data ?? []) {
-        if (next[line.id] === undefined) next[line.id] = line.batch_reference ?? ""
+        if (next[line.id] === undefined) next[line.id] = line.batch_reference?.trim() || autoBatchReference(line.id)
       }
       return next
     })
@@ -233,26 +361,27 @@ function Detail({
   const issues = useMemo(() => {
     if (!shipment) return []
     const next: string[] = []
-    if (packageCount.trim() === "" || Number(packageCount) < 0 || Number.isNaN(Number(packageCount))) {
-      next.push("Package count is missing.")
-    }
-    for (const [label, value] of [
-      ["Freight total", freightTotal],
-      ["Shipping company total", shippingTotal],
-      ["Clearance total", clearanceTotal],
-    ] as const) {
-      if (value.trim() === "" || Number.isNaN(Number(value)) || Number(value) < 0) next.push(`${label} needs a saved amount. Zero is allowed.`)
+    const missing: string[] = []
+    if (packageStatus(packageCount) !== "Actual") missing.push("package count")
+    const shippingActual = draftCharges.some(
+      (charge) => charge.group === "shipping_company" && moneyStatus(charge.amount, charge.assumed) === "Actual",
+    )
+    const clearanceActual = draftCharges.some(
+      (charge) => charge.group === "clearance" && moneyStatus(charge.amount, charge.assumed) === "Actual",
+    )
+    if (!shippingActual) missing.push("shipping company charges")
+    if (!clearanceActual) missing.push("clearance actuals")
+    if (missing.length) next.push(`Missing: ${missing.join(", ")}`)
+    for (const charge of draftCharges) {
+      if (charge.amount.trim() !== "" && (Number.isNaN(Number(charge.amount)) || Number(charge.amount) < 0)) {
+        next.push(`${charge.description} needs a number. Zero is allowed.`)
+      }
     }
     if (shipment.allocation_method === "weight" && lines.some((line) => Number(line.unit_weight_grams) <= 0)) {
       next.push("A line is missing unit weight.")
     }
-    for (const line of lines) {
-      if (tracked[line.product_id] && !(batchRefs[line.id] || "").trim()) {
-        next.push(`Batch reference is missing for ${line.name}.`)
-      }
-    }
     return next
-  }, [batchRefs, clearanceTotal, freightTotal, lines, packageCount, shipment, shippingTotal, tracked])
+  }, [draftCharges, lines, packageCount, shipment])
 
   async function run(action: () => Promise<void>) {
     setPending(true)
@@ -275,27 +404,18 @@ function Detail({
       p_freight_per_kg: freightRate.trim() === "" ? null : Number(freightRate),
       p_batch_references: lines.map((line) => ({
         line_id: line.id,
-        batch_reference: (batchRefs[line.id] || "").trim(),
+        batch_reference: (batchRefs[line.id] || "").trim() || autoBatchReference(line.id),
       })),
-      p_charges: [
-        { kind: "freight", amount: Number(freightTotal) || 0, cost_group: "freight", source: "actual", recoverable: false },
-        {
-          kind: "other",
-          amount: Number(shippingTotal) || 0,
-          cost_group: "shipping_company",
-          source: "actual",
-          recoverable: false,
-          description: "Shipping company",
-        },
-        {
-          kind: "duty",
-          amount: Number(clearanceTotal) || 0,
-          cost_group: "clearance",
-          source: "actual",
-          recoverable: false,
-          description: "Clearance",
-        },
-      ],
+      p_charges: draftCharges
+        .filter((charge) => charge.amount.trim() !== "")
+        .map((charge) => ({
+          kind: charge.kind,
+          amount: Number(charge.amount) || 0,
+          cost_group: charge.group,
+          source: moneyStatus(charge.amount, charge.assumed) === "Actual" ? "actual" : "projected",
+          recoverable: charge.recoverable,
+          description: charge.description,
+        })),
     }
   }
 
@@ -305,35 +425,81 @@ function Detail({
 
   const progress = (stageIndex(shipment.stage) / (shipmentStages.length - 1)) * 100
   const upcoming = nextStage(shipment.stage)
-  const groupTotals = {
-    freight: sumGroup(charges, "freight"),
-    shipping: sumGroup(charges, "shipping_company"),
-    clearance: sumGroup(charges, "clearance"),
+  const recorded = new Map<string, string>()
+  for (const event of events) {
+    if (event.stage && !recorded.has(event.stage)) recorded.set(event.stage, event.occurred_at)
   }
+  const weightKg = chargeable.trim() === "" ? weightGrams / 1000 : Number(chargeable)
+  const typedRate = Number(freightRate)
+  const calculatedFreight =
+    Number.isNaN(weightKg) || Number.isNaN(typedRate)
+      ? 0
+      : weightKg * typedRate * Number(shipment.usd_to_business_rate)
+  const checkpoints = [
+    recorded.has("order_placed"),
+    false,
+    false,
+    recorded.has("at_forwarder"),
+    recorded.has("handed_to_freight"),
+    recorded.has("arrived"),
+    recorded.has("customs"),
+    recorded.has("cleared"),
+    recorded.has("received"),
+    recorded.has("stock_added"),
+  ]
+  const dated = checkpoints.filter(Boolean).length
+  const freightBadge =
+    draftCharges.some((charge) => charge.group === "freight" && moneyStatus(charge.amount, charge.assumed) === "Actual") ||
+    rateStatus(freightRate, assumedFreight) === "Actual"
+      ? "Actual"
+      : rateStatus(freightRate, assumedFreight) === "Baseline" ||
+          draftCharges.some((charge) => charge.group === "freight" && moneyStatus(charge.amount, charge.assumed) === "Projected")
+        ? "Baseline"
+        : "Pending"
+  const groupBadge = (group: string) => {
+    if (group === "freight") return freightBadge
+    const rows = draftCharges.filter((charge) => charge.group === group)
+    if (rows.some((charge) => moneyStatus(charge.amount, charge.assumed) === "Actual")) return "Actual"
+    if (rows.some((charge) => moneyStatus(charge.amount, charge.assumed) === "Projected")) return "Projected"
+    return "Missing"
+  }
+  const entered = (group: string) =>
+    draftCharges
+      .filter((charge) => charge.group === group && charge.amount.trim() !== "" && !charge.recoverable)
+      .reduce((sum, charge) => sum + (Number(charge.amount) || 0), 0)
+  const previewLanding = (entered("freight") || calculatedFreight) + entered("shipping_company") + entered("clearance")
 
   return (
     <div className="flex flex-col gap-4">
       <Card>
         <CardHeader>
-          <CardTitle>{shipment.name || shipment.reference || "Shipment"}</CardTitle>
           <CardDescription>
-            {shipment.reference} · {supplierName || "No supplier"} · {shipment.origin_country || "No origin"} ·{" "}
-            {shipment.expected_on || "No ETA"}
+            <Link className="underline-offset-4 hover:underline" href={`/app/${businessKey}/shipments`}>
+              Back to Shipment Tracker
+            </Link>
           </CardDescription>
+          <CardTitle>Shipment Command Header</CardTitle>
+          <CardDescription>{shipment.name || shipment.reference || "Shipment"}</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <div className="flex flex-wrap gap-2">
+            <Badge variant="secondary">{draft ? "Draft Order (Internal)" : stageLabel(shipment.stage)}</Badge>
             <Badge variant={shipment.status === "delivered" ? "positive" : "secondary"}>
               {statusLabel(shipment.status)}
             </Badge>
-            <Badge variant="outline">{stageLabel(shipment.stage)}</Badge>
             {shipment.actuals_locked ? <Badge variant="positive">Actuals locked</Badge> : null}
           </div>
-          <dl className="grid gap-2 text-sm sm:grid-cols-4">
-            <Stat label="Total units" value={quantity(units)} />
+          <dl className="grid grid-cols-1 gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+            <Stat label="Shipment ID" value={shipment.reference || "No reference"} />
+            <Stat label="Supplier" value={supplierName || "Pending Supplier"} />
+            <Stat label="Origin Country" value={shipment.origin_country || "Not set"} />
+            <Stat label="ETA" value={shipment.expected_on || "Pending"} />
+          </dl>
+          <dl className="grid grid-cols-2 gap-3 text-sm">
+            <Stat label="Total Units" value={quantity(units)} />
+            <Stat label="Pipeline Cost (Pre-Landed)" value={money(Number(shipment.merchandise_total), business.currency)} />
             <Stat label="Total SKUs" value={String(lines.length)} />
-            <Stat label="Pipeline cost" value={money(Number(shipment.merchandise_total), business.currency)} />
-            <Stat label="Destination" value={locationName || "No destination"} />
+            <Stat label="Batch Apply Status" value={shipment.actuals_locked || shipment.status === "delivered" ? "Applied" : "Pending Apply"} />
           </dl>
           <div className="flex flex-wrap gap-2">
             {draft ? (
@@ -357,6 +523,7 @@ function Detail({
                 }
               >
                 Advance to {stageLabel(upcoming)}
+                {upcoming === "order_placed" ? " (Supplier Confirmed)" : ""}
               </Button>
             ) : null}
             {shipment.status === "pending" && !draft ? (
@@ -407,7 +574,7 @@ function Detail({
                   })
                 }
               >
-                Delete draft
+                Delete Shipment
               </Button>
             ) : null}
           </div>
@@ -416,18 +583,35 @@ function Detail({
 
       <Card>
         <CardHeader>
-          <CardTitle>Shipment progress</CardTitle>
+          <CardTitle>Shipment Lifecycle</CardTitle>
           <CardDescription>
+            {dated} / 10
             {shipment.stage === "stock_added"
-              ? "Inventory has been applied."
+              ? " · Inventory has been applied."
               : shipment.stage === "received"
-                ? "Confirm actuals and apply inventory."
-                : stageDetail(upcoming)}
+                ? " · Confirm actuals and apply inventory."
+                : ` · ${stageDetail(upcoming)}`}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <div className="h-2 overflow-hidden rounded-full bg-muted">
             <div className="h-full bg-primary" style={{ width: `${progress}%` }} />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                ["Supplier", "order_placed"],
+                ["Forwarder", "at_forwarder"],
+                ["Freight", "arrived"],
+                ["Customs", "cleared"],
+                ["Final Delivery", "received"],
+                ["Inventory", "stock_added"],
+              ] as const
+            ).map(([label, stage]) => (
+              <Badge key={stage} variant={recorded.has(stage) ? "positive" : "outline"}>
+                {label} · {recorded.has(stage) ? "Done" : "Pending"}
+              </Badge>
+            ))}
           </div>
           <div className="flex flex-wrap gap-2">
             {shipmentStages.map(([key, label]) => (
@@ -449,6 +633,32 @@ function Detail({
               >
                 {label}
               </Button>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            {phases.map((phase) => (
+              <FormSection key={phase.title} title={phase.title}>
+                <div className="py-3">
+                  <p className="mb-2 text-xs text-muted-foreground">{phase.note}</p>
+                  <FieldGrid>
+                    {phase.rows.map((row) => (
+                      <ValueCard
+                        key={row.label}
+                        label={row.label}
+                        value={
+                          row.stage && recorded.has(row.stage)
+                            ? new Date(recorded.get(row.stage)!).toLocaleString()
+                            : "Pending"
+                        }
+                      />
+                    ))}
+                    <ValueCard
+                      label={phase.duration}
+                      value={spanLabel(recorded.get(phase.from), recorded.get(phase.to))}
+                    />
+                  </FieldGrid>
+                </div>
+              </FormSection>
             ))}
           </div>
           <Collapsible open={timelineOpen} onOpenChange={setTimelineOpen}>
@@ -474,7 +684,7 @@ function Detail({
 
       <Card>
         <CardHeader>
-          <CardTitle>Shipment composition</CardTitle>
+          <CardTitle>Shipment Lines</CardTitle>
           <CardDescription>
             {quantity(units)} units · {lines.length} SKUs · {quantity(weightGrams / 1000)} kg
           </CardDescription>
@@ -488,12 +698,13 @@ function Detail({
               <table className="w-full text-sm">
                 <thead className="text-left text-muted-foreground">
                   <tr>
-                    <th className="py-2 pr-3 font-medium">Product / SKU</th>
-                    <th className="py-2 pr-3 font-medium">Quantity</th>
-                    <th className="py-2 pr-3 font-medium">Unit weight</th>
-                    <th className="py-2 pr-3 font-medium">Line weight</th>
-                    <th className="py-2 pr-3 font-medium">Landed cost / unit</th>
-                    <th className="py-2 font-medium">Batch reference</th>
+                    <th className="py-2 pr-3 font-medium">SKU / Product</th>
+                    <th className="py-2 pr-3 font-medium">Flavor</th>
+                    <th className="py-2 pr-3 font-medium">Qty</th>
+                    <th className="py-2 pr-3 font-medium">Unit Weight</th>
+                    <th className="py-2 pr-3 font-medium">Line Weight</th>
+                    <th className="py-2 pr-3 font-medium">Landed Cost / Unit</th>
+                    <th className="py-2 font-medium">Batch Reference</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -503,6 +714,7 @@ function Detail({
                         <div className="font-medium">{line.name}</div>
                         <div className="text-muted-foreground">{line.sku}</div>
                       </td>
+                      <td className="py-2 pr-3 text-muted-foreground">—</td>
                       <td className="py-2 pr-3">{quantity(Number(line.quantity))}</td>
                       <td className="py-2 pr-3">{quantity(Number(line.unit_weight_grams))} g</td>
                       <td className="py-2 pr-3">
@@ -512,10 +724,16 @@ function Detail({
                       <td className="py-2">
                         <Input
                           className="w-36"
-                          value={batchRefs[line.id] ?? ""}
+                          value={batchRefs[line.id] || autoBatchReference(line.id)}
                           disabled={locked || receivedAny}
                           onChange={(event) =>
-                            setBatchRefs((current) => ({ ...current, [line.id]: event.target.value }))
+                            setBatchRefs((current) => ({
+                              ...current,
+                              [line.id]:
+                                event.target.value.trim() === ""
+                                  ? autoBatchReference(line.id)
+                                  : event.target.value,
+                            }))
                           }
                         />
                       </td>
@@ -528,133 +746,206 @@ function Detail({
         </CardContent>
       </Card>
 
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+        <div className="flex flex-col gap-4">
       <Card>
         <CardHeader>
-          <CardTitle>Pricing</CardTitle>
-          <CardDescription>Saved with the draft. Reviewing the shipment does not change these rates.</CardDescription>
+          <CardTitle>Pricing / Exchange</CardTitle>
+          <CardDescription>Operational pricing context for this shipment. Carried over from the draft.</CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-2 text-sm sm:grid-cols-4">
-          <Stat label="Discount" value={`${Number(shipment.discount_percent)}%`} />
-          <Stat label="Origin to USD" value={String(shipment.origin_to_usd_rate)} />
-          <Stat label={`USD to ${business.currency}`} value={String(shipment.usd_to_business_rate)} />
-          <Stat label="Declared value USD" value={money(Number(shipment.declared_value), "USD")} />
+        <CardContent>
+          <FieldGrid>
+            <ValueCard label="Discount %" value={`${Number(shipment.discount_percent).toFixed(2)}%`} badge={<Badge variant="secondary">Carried over</Badge>} />
+            <ValueCard label="Origin -> USD Exchange Rate" value={String(shipment.origin_to_usd_rate)} badge={<Badge variant="secondary">Carried over</Badge>} />
+            <ValueCard label={`USD -> ${business.currency} Exchange Rate`} value={String(shipment.usd_to_business_rate)} badge={<Badge variant="secondary">Carried over</Badge>} />
+            <ValueCard label="Declared Value USD" value={money(Number(shipment.declared_value), "USD")} badge={<Badge variant="secondary">Auto</Badge>} />
+          </FieldGrid>
         </CardContent>
       </Card>
 
       {draft ? null : (
         <Card>
           <CardHeader>
-            <CardTitle>Actual costs</CardTitle>
+            <CardTitle>Actual Financial Truth Inputs</CardTitle>
             <CardDescription>
-              Calculated weight {quantity(weightGrams / 1000)} kg. A blank amount is incomplete. Zero is a confirmed
-              actual. Costs lock after the first receipt.
+              These values become batch cost truth when inventory is applied. Amounts start as the previous order&apos;s
+              projected value. Change a number and its badge turns Actual.
             </CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-3 md:grid-cols-2">
-            <Field label="Chargeable weight kg">
-              <Input
-                type="number"
-                min="0"
-                step="0.001"
-                value={chargeable}
-                disabled={locked || receivedAny}
-                onChange={(event) => setChargeable(event.target.value)}
-              />
-            </Field>
-            <Field label="Freight USD per kg">
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={freightRate}
-                disabled={locked || receivedAny}
-                onChange={(event) => setFreightRate(event.target.value)}
-              />
-            </Field>
-            <Field label="Freight total">
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={freightTotal}
-                disabled={locked || receivedAny}
-                onChange={(event) => setFreightTotal(event.target.value)}
-              />
-            </Field>
-            <Field label="Package count actual">
-              <div className="flex gap-2">
-                <Input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={packageCount}
-                  disabled={locked || receivedAny}
-                  onChange={(event) => setPackageCount(event.target.value)}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={locked || receivedAny}
-                  onClick={() => setPackageCount(String(suggested))}
-                >
-                  Use {suggested}
-                </Button>
-              </div>
-            </Field>
-            <Field label="Shipping company total">
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={shippingTotal}
-                disabled={locked || receivedAny}
-                onChange={(event) => setShippingTotal(event.target.value)}
-              />
-            </Field>
-            <Field label="Clearance total">
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={clearanceTotal}
-                disabled={locked || receivedAny}
-                onChange={(event) => setClearanceTotal(event.target.value)}
-              />
-            </Field>
+          <CardContent className="flex flex-col gap-4">
+            {chargeGroups
+              .filter(([group]) => group !== "other" || draftCharges.some((charge) => charge.group === group))
+              .map(([group]) => (
+                <FormSection key={group} title={group === "shipping_company" ? "Shipping Company Charges" : group === "clearance" ? "Clearance" : groupLabel(group)}>
+                  <div className="flex flex-col gap-2.5 py-3">
+                    <FieldGrid>
+                      {group === "freight" ? (
+                        <>
+                          <ValueCard label="Calculated Shipment Weight" value={`${quantity(weightGrams / 1000)} kg`} />
+                          <ValueCard
+                            label="Chargeable Weight Used"
+                            value={`${quantity(chargeable.trim() === "" ? weightGrams / 1000 : Number(chargeable) || 0)} kg`}
+                          />
+                          <FieldCard
+                            label="USD per kg"
+                            badge={<StatusBadge status={rateStatus(freightRate, assumedFreight)} />}
+                            quiet={rateStatus(freightRate, assumedFreight) !== "Actual"}
+                            hint={
+                              rateStatus(freightRate, assumedFreight) === "Actual"
+                                ? "Entered on this shipment"
+                                : assumedFreight
+                                  ? `Previous order baseline (USD ${assumedFreight})`
+                                  : "No previous rate"
+                            }
+                          >
+                            <Input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={freightRate}
+                              disabled={locked || receivedAny}
+                              onValueChange={setFreightRate}
+                            />
+                          </FieldCard>
+                          <FieldCard label="Chargeable weight kg">
+                            <Input
+                              type="number"
+                              min="0"
+                              step="0.001"
+                              value={chargeable}
+                              disabled={locked || receivedAny}
+                              onValueChange={setChargeable}
+                            />
+                          </FieldCard>
+                          <FieldCard
+                            label="Package Count"
+                            badge={<StatusBadge status={packageStatus(packageCount)} />}
+                            quiet={packageStatus(packageCount) !== "Actual"}
+                            hint={packageStatus(packageCount) === "Actual" ? "Confirmed by forwarder" : `Pending. Suggested ${suggested}. Required before inventory is applied.`}
+                          >
+                            <div className="flex gap-2">
+                              <Input
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={packageCount}
+                                disabled={locked || receivedAny}
+                                onValueChange={setPackageCount}
+                              />
+                              <Button
+                                type="button"
+                                variant="outline"
+                                disabled={locked || receivedAny}
+                                onClick={() => setPackageCount(String(suggested))}
+                              >
+                                Use {suggested}
+                              </Button>
+                            </div>
+                          </FieldCard>
+                        </>
+                      ) : null}
+                      {draftCharges
+                        .filter((charge) => charge.group === group)
+                        .map((charge) => {
+                          const status = moneyStatus(charge.amount, charge.assumed)
+                          return (
+                          <FieldCard
+                            key={charge.key}
+                            label={chargeLabel(charge.description)}
+                            badge={<StatusBadge status={status} />}
+                            quiet={status !== "Actual"}
+                            hint={
+                              status === "Actual"
+                                ? "Entered on this shipment"
+                                : status === "Projected"
+                                  ? `Projected from the previous order (${money(Number(charge.assumed) || 0, business.currency)})`
+                                  : status === "Missing"
+                                    ? "No projection available"
+                                    : "Pending"
+                            }
+                          >
+                            <Input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={charge.amount}
+                              disabled={locked || receivedAny}
+                              onValueChange={(value) =>
+                                setDraftCharges((current) =>
+                                  current.map((item) => (item.key === charge.key ? { ...item, amount: value } : item)),
+                                )
+                              }
+                            />
+                          </FieldCard>
+                          )
+                        })}
+                    </FieldGrid>
+                    {group === "freight" ? (
+                      <>
+                        <ValueCard
+                          label="Freight Total"
+                          badge={<StatusBadge status={freightBadge} />}
+                          value={money(entered("freight") || calculatedFreight, business.currency)}
+                        />
+                        <ValueCard
+                          label="Actual Freight / Financial Truth"
+                          badge={<StatusBadge status={freightBadge === "Actual" ? "Actual" : "Pending"} />}
+                          value={money(freightBadge === "Actual" ? entered("freight") || calculatedFreight : 0, business.currency)}
+                        />
+                      </>
+                    ) : (
+                      <ValueCard
+                        label={group === "clearance" ? "Clearance Total (Financial Truth Input Basis)" : `${group === "shipping_company" ? "Shipping Company" : groupLabel(group)} Total`}
+                        badge={<StatusBadge status={groupBadge(group)} />}
+                        value={money(entered(group), business.currency)}
+                      />
+                    )}
+                  </div>
+                </FormSection>
+              ))}
+            {issues.length > 0 ? (
+              <p className="text-sm text-destructive">Not ready — actuals required. {issues[0]}</p>
+            ) : (
+              <p className="text-sm text-muted-foreground">Actuals are ready. Preview includes defaults until you change a projected value.</p>
+            )}
             {open ? (
-              <div className="md:col-span-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={pending || receivedAny}
-                  onClick={() => void run(() => callRpc(supabase, "save_shipment_actuals", actualPayload()))}
-                >
-                  Save actuals
-                </Button>
-              </div>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={pending || receivedAny}
+                onClick={() => void run(() => callRpc(supabase, "save_shipment_actuals", actualPayload()))}
+              >
+                Save Shipment Details
+              </Button>
             ) : null}
           </CardContent>
         </Card>
       )}
+        </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Final accounting</CardTitle>
+          <CardTitle>Final Accounting Summary</CardTitle>
           <CardDescription>
-            Allocation {shipment.allocation_method}. Landing charges {money(Number(shipment.charge_total), business.currency)}.
+            Review the projected totals before inventory is applied. Line costs allocate shared landing cost by shipment weight.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3 text-sm">
-          <Summary label="Purchase cost" value={money(Number(shipment.merchandise_total), business.currency)} />
-          <Summary label="Freight total" value={money(groupTotals.freight, business.currency)} />
-          <Summary label="Shipping company total" value={money(groupTotals.shipping, business.currency)} />
-          <Summary label="Clearance total" value={money(groupTotals.clearance, business.currency)} />
-          <Summary label="Landing cost total" value={money(Number(shipment.charge_total), business.currency)} />
-          <Summary label="Total shipment cost" value={money(Number(shipment.landing_total), business.currency)} />
+          <ValueCard label="Purchase Cost (Products)" badge={<StatusBadge status="Actual" />} value={money(Number(shipment.merchandise_total), business.currency)} />
+          <ValueCard label="Freight Total" badge={<StatusBadge status={freightBadge} />} value={money(entered("freight") || calculatedFreight, business.currency)} />
+          <ValueCard label="Shipping Company Total" badge={<StatusBadge status={groupBadge("shipping_company")} />} value={money(entered("shipping_company"), business.currency)} />
+          <ValueCard label="Clearance Total" badge={<StatusBadge status={groupBadge("clearance")} />} value={money(entered("clearance"), business.currency)} />
+          <Summary label="Landing Cost Total" value={money(previewLanding, business.currency)} />
+          <Summary label="Total Shipment Cost" value={money(Number(shipment.merchandise_total) + previewLanding, business.currency)} />
+          <p className="text-xs text-muted-foreground">Preview includes defaults until actuals are saved.</p>
           {lines.map((line) => {
             const lineWeight = Number(line.quantity) * Number(line.unit_weight_grams)
             const share = weightGrams > 0 ? (lineWeight / weightGrams) * 100 : 0
-            const lineMargin = margin(Number(line.sell_price), Number(line.unit_landing_cost))
+            const purchase = Number(line.quantity) * Number(line.unit_cost)
+            const allocated = weightGrams > 0 ? previewLanding * (lineWeight / weightGrams) : 0
+            const finalLine = purchase + allocated
+            const finalUnit = Number(line.quantity) > 0 ? finalLine / Number(line.quantity) : 0
+            const lineMargin = margin(Number(line.sell_price), finalUnit)
             const left = Number(line.quantity) - Number(line.quantity_received)
             return (
               <div key={line.id} className="border-t pt-3">
@@ -662,16 +953,14 @@ function Detail({
                   <div>
                     <div className="font-medium">{line.name}</div>
                     <div className="text-muted-foreground">
-                      Purchase {money(Number(line.quantity) * Number(line.unit_cost), business.currency)} · allocated{" "}
-                      {money(Number(line.allocated_charge), business.currency)} · {share.toFixed(1)}% of weight
-                      {lineMargin === null ? "" : ` · margin ${(lineMargin * 100).toFixed(1)}%`}
+                      Purchase {money(purchase, business.currency)} · allocated {money(allocated, business.currency)} ·{" "}
+                      {share.toFixed(2)}% of weight
+                      {lineMargin === null ? "" : ` · margin ${(lineMargin * 100).toFixed(2)}%`}
                     </div>
                   </div>
                   <div className="text-right tabular-nums">
-                    <div>{money(Number(line.line_landing_total), business.currency)}</div>
-                    <div className="text-muted-foreground">
-                      {money(Number(line.unit_landing_cost), business.currency)} each
-                    </div>
+                    <div>{money(finalLine, business.currency)}</div>
+                    <div className="text-muted-foreground">{money(finalUnit, business.currency)} / unit</div>
                   </div>
                 </div>
                 {open && left > 0 && !draft ? (
@@ -719,6 +1008,13 @@ function Detail({
             </Button>
           ) : null}
           {message ? <p className="text-destructive">{message}</p> : null}
+          {open && !draft && issues.length > 0 ? (
+            <ul className="list-disc pl-4 text-destructive">
+              {issues.map((issue) => (
+                <li key={issue}>{issue}</li>
+              ))}
+            </ul>
+          ) : null}
           {open && !draft ? (
             <Button type="button" disabled={pending} onClick={() => setConfirmOpen(true)}>
               Confirm actuals and apply inventory
@@ -726,6 +1022,7 @@ function Detail({
           ) : null}
         </CardContent>
       </Card>
+      </div>
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent className="sm:max-w-lg">
@@ -735,9 +1032,9 @@ function Detail({
           </DialogHeader>
           <div className="flex flex-col gap-2 text-sm">
             <Summary label="Package count" value={packageCount || "Missing"} />
-            <Summary label="Freight total" value={money(Number(freightTotal) || 0, business.currency)} />
-            <Summary label="Shipping company total" value={money(Number(shippingTotal) || 0, business.currency)} />
-            <Summary label="Clearance total" value={money(Number(clearanceTotal) || 0, business.currency)} />
+            <Summary label="Freight total" value={money(entered("freight"), business.currency)} />
+            <Summary label="Shipping company total" value={money(entered("shipping_company"), business.currency)} />
+            <Summary label="Clearance total" value={money(entered("clearance"), business.currency)} />
             <Summary label="Actual landed cost" value={money(Number(shipment.landing_total), business.currency)} />
             {lines.map((line) => (
               <Summary
@@ -776,10 +1073,10 @@ function Detail({
   )
 }
 
-function sumGroup(charges: { cost_group: string; amount: number; recoverable: boolean }[], group: string) {
-  return charges
-    .filter((charge) => charge.cost_group === group && !charge.recoverable)
-    .reduce((sum, charge) => sum + Number(charge.amount), 0)
+function spanLabel(from: string | undefined, to: string | undefined) {
+  if (!from || !to) return "Duration: pending"
+  const days = Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86400000)
+  return `${days} days`
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
@@ -800,11 +1097,3 @@ function Summary({ label, value }: { label: string; value: string }) {
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Label>{label}</Label>
-      {children}
-    </div>
-  )
-}

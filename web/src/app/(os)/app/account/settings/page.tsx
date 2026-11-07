@@ -4,6 +4,7 @@ import { useState } from "react"
 
 import { InsightsView } from "@/components/analytics/insights"
 import { StatusBadge } from "@/components/analytics/status-badge"
+import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -15,6 +16,7 @@ import {
 } from "@/components/ui/card"
 import {
   Field,
+  FieldDescription,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field"
@@ -51,6 +53,23 @@ export default function AccountSettingsPage() {
         </StatusBadge>
       </div>
       <InsightsView data={buildInsights("Account Settings", "platform")} variant="compact" />
+      <Card>
+        <CardHeader>
+          <CardTitle>Appearance</CardTitle>
+          <CardDescription>Theme for the whole app.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Field orientation="horizontal">
+            <div className="flex flex-1 flex-col gap-1">
+              <FieldLabel>Color theme</FieldLabel>
+              <FieldDescription>
+                Toggle light and dark. The new theme expands from the button.
+              </FieldDescription>
+            </div>
+            <ThemeToggle />
+          </Field>
+        </CardContent>
+      </Card>
       <Card>
         <CardHeader>
           <CardTitle>Preferences</CardTitle>

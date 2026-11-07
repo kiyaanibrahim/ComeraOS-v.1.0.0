@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { FlowFrame } from "@/components/flow/flow-frame"
+import { ProcurementNav } from "@/components/procurement/procurement-nav"
 import {
   Card,
   CardContent,
@@ -62,13 +63,14 @@ export function LandingCost({ businessKey }: { businessKey: string }) {
       businessKey={businessKey}
       title="Landing cost"
       description="How saved freight and clearance charges land on each SKU."
+      aside={<ProcurementNav businessKey={businessKey} current="landing" />}
     >
-      {({ business, supabase }) => <Worksheet business={business} supabase={supabase} />}
+      {({ business, supabase }) => <LandingWorksheet business={business} supabase={supabase} />}
     </FlowFrame>
   )
 }
 
-function Worksheet({ business, supabase }: { business: BusinessRecord; supabase: FlowClient }) {
+export function LandingWorksheet({ business, supabase }: { business: BusinessRecord; supabase: FlowClient }) {
   const [shipments, setShipments] = useState<Shipment[]>([])
   const [lines, setLines] = useState<Line[]>([])
   const [charges, setCharges] = useState<Charge[]>([])
@@ -122,7 +124,7 @@ function Worksheet({ business, supabase }: { business: BusinessRecord; supabase:
   ])
 
   return (
-    <div className="flex flex-col gap-4">
+    <div id="landing" className="flex flex-col gap-4">
       <div className="flex max-w-sm flex-col gap-1.5">
         <Label>Shipment</Label>
         <Select value={shipmentId} items={items} onValueChange={(value) => setShipmentId(value || "all")}>

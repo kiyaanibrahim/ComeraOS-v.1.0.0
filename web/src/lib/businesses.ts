@@ -18,16 +18,21 @@ export const businesses: Business[] = [
     staff: 4,
     billingStatus: "Current",
   },
-  {
-    id: "north",
-    name: "Juicify Pvt Ltd",
-    plan: "Beverage",
-    sales: 8420,
-    openOrders: 3,
-    staff: 7,
-    billingStatus: "Current",
-  },
 ]
+
+export function presentBusiness(row: { slug: string; name: string }): Business {
+  const known = businesses.find((business) => business.id === row.slug)
+  if (known) return { ...known, name: row.name }
+  return {
+    id: row.slug,
+    name: row.name,
+    plan: "Business",
+    sales: 0,
+    openOrders: 0,
+    staff: 1,
+    billingStatus: "Current",
+  }
+}
 
 export function getBusiness(id: string): Business {
   return (

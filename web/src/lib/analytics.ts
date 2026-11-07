@@ -841,7 +841,7 @@ const modules: Record<string, ModuleSpec> = {
       description: "Sales by business.",
       kind: "money",
       base: 10000,
-      items: [businesses[0].name, businesses[1].name],
+      items: businesses.map((business) => business.name),
     },
     split: {
       title: "Billing",
@@ -866,7 +866,7 @@ const modules: Record<string, ModuleSpec> = {
       description: "Sales by business.",
       kind: "money",
       base: 10000,
-      items: [businesses[0].name, businesses[1].name],
+      items: businesses.map((business) => business.name),
     },
     split: {
       title: "Platform",
@@ -916,7 +916,7 @@ const modules: Record<string, ModuleSpec> = {
       description: "Enabled features by business.",
       kind: "count",
       base: 12,
-      items: [businesses[0].name, businesses[1].name, "Shared"],
+      items: [...businesses.map((business) => business.name), "Shared"],
     },
     split: {
       title: "Grant state",
@@ -1066,7 +1066,7 @@ const modules: Record<string, ModuleSpec> = {
       description: "Users by business.",
       kind: "count",
       base: 16,
-      items: [businesses[0].name, businesses[1].name, "Platform"],
+      items: [...businesses.map((business) => business.name), "Platform"],
     },
     split: {
       title: "Account state",
