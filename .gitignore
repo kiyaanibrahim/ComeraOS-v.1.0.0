@@ -12,6 +12,9 @@ dist/
 .env.*
 !.env*.example
 
+# supabase cli cache
+supabase/.temp/
+
 # misc
 .DS_Store
 *.pem

@@ -1,35 +1,26 @@
-import { PageHeader } from "./PageHeader";
+import { Suspense } from "react"
+
+import { ModuleInsights } from "@/components/analytics/module-insights"
+import { RecordLedger } from "@/components/records/record-ledger"
 
 type ModulePageProps = {
-  title: string;
-  description: string;
-  section?: string;
-  children?: React.ReactNode;
-};
+  title: string
+  description: string
+  section?: string
+  children?: React.ReactNode
+}
 
-export function ModulePage({
-  title,
-  description,
-  section = "Module",
-  children,
-}: ModulePageProps) {
+export function ModulePage({ title, description, children }: ModulePageProps) {
   return (
-    <div>
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
-        {section}
-      </p>
-      <PageHeader title={title} description={description} />
-      {children ?? (
-        <div className="rounded-xl border border-dashed border-[var(--border)] bg-white/70 p-8">
-          <p className="text-sm font-medium text-[var(--foreground)]">
-            Scaffold ready
-          </p>
-          <p className="mt-1 text-sm text-[var(--muted)]">
-            This module is wired into navigation. Data models and workflows land
-            in the next build phases.
-          </p>
-        </div>
-      )}
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <h1 className="font-heading text-xl font-medium tracking-tight">{title}</h1>
+        <p className="text-sm text-muted-foreground">{description}</p>
+      </div>
+      <Suspense fallback={<div className="h-40 animate-pulse rounded-xl bg-muted" />}>
+        <ModuleInsights title={title} />
+        {children ?? <RecordLedger title={title} />}
+      </Suspense>
     </div>
-  );
+  )
 }

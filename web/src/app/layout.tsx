@@ -1,28 +1,15 @@
-import type { Metadata } from "next";
-import { Fraunces, Source_Sans_3, IBM_Plex_Mono } from "next/font/google";
-import "./globals.css";
+import type { Metadata } from "next"
+import { Geist, Geist_Mono } from "next/font/google"
+import "./globals.css"
+import { cn } from "@/lib/utils"
+import { TooltipProvider } from "@/components/ui/tooltip"
 
-const display = Fraunces({
-  variable: "--font-display",
-  subsets: ["latin"],
-  weight: ["500", "600", "700"],
-});
-
-const body = Source_Sans_3({
-  variable: "--font-body",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
-
-const mono = IBM_Plex_Mono({
-  variable: "--font-mono",
-  subsets: ["latin"],
-  weight: ["400", "500"],
-});
+const geist = Geist({ subsets: ["latin"], variable: "--font-sans" })
+const geistMono = Geist_Mono({ subsets: ["latin"], variable: "--font-mono" })
 
 export const metadata: Metadata = {
   title: "ComeraOS",
-  description: "Business operating system for colonies, commerce, and integrity.",
+  description: "Business operating system for businesses, commerce, and integrity.",
   applicationName: "ComeraOS",
   icons: {
     icon: [
@@ -35,20 +22,21 @@ export const metadata: Metadata = {
     shortcut: ["/logo.png"],
   },
   manifest: "/site.webmanifest",
-  themeColor: "#000000",
-};
+}
 
 export default function RootLayout({
   children,
 }: Readonly<{
-  children: React.ReactNode;
+  children: React.ReactNode
 }>) {
   return (
     <html
       lang="en"
-      className={`${display.variable} ${body.variable} ${mono.variable} h-full antialiased`}
+      className={cn("h-full antialiased", geist.variable, geistMono.variable)}
     >
-      <body className="min-h-full">{children}</body>
+      <body className="min-h-full font-sans">
+        <TooltipProvider>{children}</TooltipProvider>
+      </body>
     </html>
-  );
+  )
 }

@@ -1,43 +1,63 @@
-import Link from "next/link";
-import { ModulePage } from "@/components/shell/ModulePage";
+import Link from "next/link"
+
+import { InsightsView } from "@/components/analytics/insights"
+import { StatusBadge } from "@/components/analytics/status-badge"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import { buildInsights } from "@/lib/analytics"
 
 const links = [
   { href: "/app/account/personal", label: "Personal Information" },
   { href: "/app/account/security", label: "Security & Privacy" },
   { href: "/app/account/settings", label: "Account Settings" },
-];
+]
 
 export default function AccountPage() {
   return (
-    <ModulePage
-      section="Account"
-      title="Profile Overview"
-      description="Your ComeraOS identity at a glance."
-    >
-      <div className="rounded-xl border border-[var(--border)] bg-white p-5">
-        <div className="flex items-center gap-4">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[var(--sidebar)] text-lg font-semibold text-white">
-            U
-          </div>
-          <div>
-            <p className="font-[family-name:var(--font-display)] text-lg font-semibold">
-              Demo User
-            </p>
-            <p className="text-sm text-[var(--muted)]">demo@comera.os</p>
-          </div>
-        </div>
-        <div className="mt-5 grid gap-2 sm:grid-cols-3">
-          {links.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm hover:border-[var(--accent)] hover:bg-[var(--background)]"
-            >
-              {link.label}
-            </Link>
-          ))}
-        </div>
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <h1 className="font-heading text-xl font-medium tracking-tight">
+          Profile Overview
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          Your ComeraOS identity at a glance.
+        </p>
       </div>
-    </ModulePage>
-  );
+      <div className="flex flex-wrap gap-2">
+        <StatusBadge tone="positive">Active</StatusBadge>
+        <StatusBadge tone="positive">Email verified</StatusBadge>
+      </div>
+      <InsightsView data={buildInsights("Profile Overview", "platform")} />
+      <Card>
+        <CardHeader>
+          <CardTitle>Demo User</CardTitle>
+          <CardDescription>demo@comera.os</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <Avatar className="size-12">
+            <AvatarFallback>DU</AvatarFallback>
+          </Avatar>
+          <div className="flex flex-wrap gap-2">
+            {links.map((link) => (
+              <Button
+                key={link.href}
+                variant="outline"
+                nativeButton={false}
+                render={<Link href={link.href} />}
+              >
+                {link.label}
+              </Button>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
 }

@@ -1,0 +1,22 @@
+---
+description: New features must add their database tables in a migration
+alwaysApply: true
+---
+
+# Schema stays with the feature
+
+ComeraOS stores tenant data in the Supabase project `ComeraOS backend` (`gmtgurivzertmruarvkl`). Tables live in `public` with row level security. Helper functions live in `private` and stay off the Data API.
+
+When a feature reads or writes persisted data:
+
+1. Add a new file in `supabase/migrations`. Do not edit a migration that has already been applied.
+2. Create the table with a primary key, `colony_id` when the row belongs to one business, foreign keys, and an index on every foreign key.
+3. Enable row level security. Colony rows use `private.is_colony_member` for staff access and `private.is_colony_admin` for admin access. Do not authorize from `user_metadata`.
+4. Grant `authenticated` only the commands that feature needs. Do not grant `anon`.
+5. Register the route and its tables in `supabase/schema-registry.json`.
+6. Apply that migration to project `gmtgurivzertmruarvkl`, then regenerate `web/src/lib/supabase/database.types.ts`.
+7. Run `npm run check:schema` in `web/` and keep it passing.
+
+A page that only reads tables another feature owns still lists those tables. A page that introduces new data gets its own migration in the same change.
+
+Example: a returns feature adds `supabase/migrations/<timestamp>_returns.sql` with `public.returns`, policies, indexes, a registry entry for `/app/[colonyId]/returns`, and the applied migration on the ComeraOS backend.
