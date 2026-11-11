@@ -1,11 +1,20 @@
-import { ModulePage } from "@/components/shell/ModulePage";
+import { Suspense } from "react"
 
-export default function Page() {
+import { OrdersDesk } from "@/components/sales/orders-desk"
+
+export default function Page({
+  params,
+}: {
+  params: Promise<{ businessId: string }>
+}) {
   return (
-    <ModulePage
-      section="Sell"
-      title="Orders"
-      description="Live and completed order ledger."
-    />
-  );
+    <Suspense fallback={<div className="h-40 animate-pulse rounded-xl bg-muted" />}>
+      <Screen params={params} />
+    </Suspense>
+  )
+}
+
+async function Screen({ params }: { params: Promise<{ businessId: string }> }) {
+  const { businessId } = await params
+  return <OrdersDesk businessKey={businessId} />
 }

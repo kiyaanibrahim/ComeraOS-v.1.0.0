@@ -1,11 +1,20 @@
-import { ModulePage } from "@/components/shell/ModulePage";
+import { Suspense } from "react"
 
-export default function Page() {
+import { BusinessConfig } from "@/components/settings/business-config"
+
+export default function Page({
+  params,
+}: {
+  params: Promise<{ businessId: string }>
+}) {
   return (
-    <ModulePage
-      section="Settings"
-      title="Business config"
-      description="Identity, locale, and operating defaults."
-    />
-  );
+    <Suspense fallback={<div className="h-40 animate-pulse rounded-xl bg-muted" />}>
+      <Config params={params} />
+    </Suspense>
+  )
+}
+
+async function Config({ params }: { params: Promise<{ businessId: string }> }) {
+  const { businessId } = await params
+  return <BusinessConfig businessKey={businessId} />
 }

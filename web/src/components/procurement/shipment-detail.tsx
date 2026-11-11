@@ -2,14 +2,16 @@
 
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { FlowFrame } from "@/components/flow/flow-frame"
 import { chargesToDrafts, type ChargeDraft } from "@/components/procurement/charge-drafts"
 import { FieldCard, FieldGrid, FormSection, ValueCard } from "@/components/procurement/form-row"
 import { ProcurementNav } from "@/components/procurement/procurement-nav"
+import { UnsavedChangesDialog, useUnsavedChanges } from "@/components/unsaved-changes"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { toast } from "@/components/ui/sonner"
 import {
   Card,
   CardContent,
@@ -232,8 +234,8 @@ function Detail({
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [timelineOpen, setTimelineOpen] = useState(false)
   const [compositionOpen, setCompositionOpen] = useState(true)
-  const [message, setMessage] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
+  const savedSnapshot = useRef("")
 
   const load = useCallback(async () => {
     const shipmentRes = await supabase
@@ -245,7 +247,7 @@ function Detail({
       .eq("business_id", business.id)
       .maybeSingle()
     if (shipmentRes.error) {
-      setMessage(shipmentRes.error.message)
+      toast.error(shipmentRes.error.message)
       return
     }
     if (!shipmentRes.data) {
@@ -318,23 +320,29 @@ function Detail({
       if (assumed) return { ...line, amount: assumed, assumed, source: "projected" }
       return { ...line, assumed }
     })
-    setPackageCount(row.package_count_actual === null ? "" : String(row.package_count_actual))
-    setChargeable(row.chargeable_weight_kg === null ? "" : String(row.chargeable_weight_kg))
-    setAssumedFreight(assumedRate)
-    setFreightRate(
+    const nextPackages = row.package_count_actual === null ? "" : String(row.package_count_actual)
+    const nextChargeable = row.chargeable_weight_kg === null ? "" : String(row.chargeable_weight_kg)
+    const nextFreight =
       assumedRate && (Number(row.freight_per_kg) === 0 || Number(row.freight_per_kg) === Number(assumedRate))
         ? assumedRate
         : Number(row.freight_per_kg) > 0
           ? String(row.freight_per_kg)
-          : assumedRate || "0",
+          : assumedRate || "0"
+    const nextBatches = Object.fromEntries(
+      (lineRes.data ?? []).map((line) => [line.id, line.batch_reference?.trim() || autoBatchReference(line.id)]),
     )
+    setPackageCount(nextPackages)
+    setChargeable(nextChargeable)
+    setAssumedFreight(assumedRate)
+    setFreightRate(nextFreight)
     setDraftCharges(drafts)
-    setBatchRefs((current) => {
-      const next = { ...current }
-      for (const line of lineRes.data ?? []) {
-        if (next[line.id] === undefined) next[line.id] = line.batch_reference?.trim() || autoBatchReference(line.id)
-      }
-      return next
+    setBatchRefs(nextBatches)
+    savedSnapshot.current = JSON.stringify({
+      packageCount: nextPackages,
+      chargeable: nextChargeable,
+      freightRate: nextFreight,
+      charges: drafts,
+      batches: nextBatches,
     })
     setReceiveQty((current) => {
       const next = { ...current }
@@ -350,6 +358,17 @@ function Detail({
     void load()
   }, [load])
 
+  const detailDirty =
+    savedSnapshot.current !== "" &&
+    savedSnapshot.current !==
+      JSON.stringify({
+        packageCount,
+        chargeable,
+        freightRate,
+        charges: draftCharges,
+        batches: batchRefs,
+      })
+  const unsaved = useUnsavedChanges(detailDirty)
   const weightGrams = lines.reduce((sum, line) => sum + Number(line.quantity) * Number(line.unit_weight_grams), 0)
   const units = lines.reduce((sum, line) => sum + Number(line.quantity), 0)
   const suggested = suggestedPackages(weightGrams)
@@ -383,14 +402,14 @@ function Detail({
     return next
   }, [draftCharges, lines, packageCount, shipment])
 
-  async function run(action: () => Promise<void>) {
+  async function run(action: () => Promise<void>, success = "Shipment updated.") {
     setPending(true)
-    setMessage(null)
     try {
       await action()
+      toast.success(success)
       await load()
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not update the shipment")
+      toast.error(error instanceof Error ? error.message : "Could not update the shipment")
     } finally {
       setPending(false)
     }
@@ -471,6 +490,7 @@ function Detail({
 
   return (
     <div className="flex flex-col gap-4">
+      <UnsavedChangesDialog open={unsaved.open} onStay={unsaved.stay} onLeave={unsaved.leave} />
       <Card>
         <CardHeader>
           <CardDescription>
@@ -913,7 +933,7 @@ function Detail({
                 type="button"
                 variant="outline"
                 disabled={pending || receivedAny}
-                onClick={() => void run(() => callRpc(supabase, "save_shipment_actuals", actualPayload()))}
+                onClick={() => void run(() => callRpc(supabase, "save_shipment_actuals", actualPayload()), "Shipment details saved.")}
               >
                 Save Shipment Details
               </Button>
@@ -1007,7 +1027,6 @@ function Detail({
               Receive partial quantities
             </Button>
           ) : null}
-          {message ? <p className="text-destructive">{message}</p> : null}
           {open && !draft && issues.length > 0 ? (
             <ul className="list-disc pl-4 text-destructive">
               {issues.map((issue) => (

@@ -11,6 +11,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { toast } from "@/components/ui/sonner"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -75,7 +76,6 @@ export function LandingWorksheet({ business, supabase }: { business: BusinessRec
   const [lines, setLines] = useState<Line[]>([])
   const [charges, setCharges] = useState<Charge[]>([])
   const [shipmentId, setShipmentId] = useState("all")
-  const [message, setMessage] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const shipmentRes = await supabase
@@ -86,7 +86,7 @@ export function LandingWorksheet({ business, supabase }: { business: BusinessRec
       .neq("status", "cancelled")
       .order("created_at", { ascending: false })
     if (shipmentRes.error) {
-      setMessage(shipmentRes.error.message)
+      toast.error(shipmentRes.error.message)
       return
     }
     const ids = (shipmentRes.data ?? []).map((row) => row.id)
@@ -107,7 +107,7 @@ export function LandingWorksheet({ business, supabase }: { business: BusinessRec
         .in("shipment_id", ids),
     ])
     if (lineRes.error || chargeRes.error) {
-      setMessage(lineRes.error?.message || chargeRes.error?.message || "Could not load landing cost")
+      toast.error(lineRes.error?.message || chargeRes.error?.message || "Could not load landing cost")
     }
     setLines(lineRes.data ?? [])
     setCharges(chargeRes.data ?? [])
@@ -141,7 +141,6 @@ export function LandingWorksheet({ business, supabase }: { business: BusinessRec
           </SelectContent>
         </Select>
       </div>
-      {message ? <p className="text-sm text-destructive">{message}</p> : null}
       {visible.length === 0 ? (
         <Card>
           <CardHeader>

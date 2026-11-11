@@ -1,11 +1,20 @@
-import { ModulePage } from "@/components/shell/ModulePage";
+import { Suspense } from "react"
 
-export default function Page() {
+import { StaffDesk } from "@/components/settings/staff-desk"
+
+export default function Page({
+  params,
+}: {
+  params: Promise<{ businessId: string }>
+}) {
   return (
-    <ModulePage
-      section="Settings"
-      title="Staff management"
-      description="People, roles, and permission grants."
-    />
-  );
+    <Suspense fallback={<div className="h-40 animate-pulse rounded-xl bg-muted" />}>
+      <Desk params={params} />
+    </Suspense>
+  )
+}
+
+async function Desk({ params }: { params: Promise<{ businessId: string }> }) {
+  const { businessId } = await params
+  return <StaffDesk businessKey={businessId} />
 }

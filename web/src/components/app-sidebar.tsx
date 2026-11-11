@@ -15,16 +15,17 @@ import {
   SidebarHeader,
   SidebarRail,
 } from "@/components/ui/sidebar"
-import { businesses, getBusiness, presentBusiness } from "@/lib/businesses"
-import { navForShell } from "@/lib/nav"
+import { presentBusiness, type Business } from "@/lib/businesses"
+import { NavModule } from "@/components/nav-module"
+import { matchModule, navForShell } from "@/lib/nav"
 import { resolveShell } from "@/lib/shell"
 import { createClient } from "@/lib/supabase/client"
 import {
   BoxesIcon,
-  Building2Icon,
   FrameIcon,
   LandmarkIcon,
   LayoutDashboardIcon,
+  MonitorIcon,
   TruckIcon,
   MapIcon,
   PieChartIcon,
@@ -37,19 +38,13 @@ import {
 
 const sectionIcons: Record<string, LucideIcon> = {
   Home: LayoutDashboardIcon,
-  Sell: ShoppingCartIcon,
+  "Point of Sale": MonitorIcon,
+  Sales: ShoppingCartIcon,
   Customers: UsersIcon,
   Procurement: TruckIcon,
   Inventory: BoxesIcon,
   Financials: LandmarkIcon,
-  Settings: Building2Icon,
   Admin: ShieldIcon,
-}
-
-const user = {
-  name: "Demo User",
-  email: "demo@comera.os",
-  avatar: "",
 }
 
 function SidebarNavFallback() {
@@ -63,9 +58,9 @@ function SidebarNavFallback() {
 function SidebarNav() {
   const pathname = usePathname()
   const shell = resolveShell(pathname)
-  const [listed, setListed] = React.useState(businesses)
+  const [listed, setListed] = React.useState<Business[]>([])
   const business = shell.businessId
-    ? listed.find((item) => item.id === shell.businessId) ?? getBusiness(shell.businessId)
+    ? listed.find((item) => item.id === shell.businessId) ?? null
     : null
 
   React.useEffect(() => {
@@ -74,8 +69,12 @@ function SidebarNav() {
       .from("businesses")
       .select("name, slug")
       .order("name")
-      .then(({ data }) => {
-        if (data && data.length > 0) setListed(data.map((row) => presentBusiness(row)))
+      .then(({ data, error }) => {
+        if (error || !data) {
+          setListed([])
+          return
+        }
+        setListed(data.map((row) => presentBusiness(row)))
       })
   }, [])
   const sections =
@@ -85,16 +84,23 @@ function SidebarNav() {
   const label =
     shell.layer === "settings" ? "Settings" : shell.layer === "admin" ? "Admin" : "Home"
 
-  const navMain = sections.map((section) => {
+  const module = matchModule(pathname, shell.businessId)
+  const mainSections = module ? sections : sections.filter((section) => section.title !== "Settings")
+  const settingsSection = sections.find((section) => section.title === "Settings")
+  const navMain = mainSections.map((section) => {
     const Icon = sectionIcons[section.title] ?? Settings2Icon
     return {
       title: section.title,
       url: section.items[0]?.href ?? "#",
       icon: <Icon />,
-      items: section.items.map((item) => ({
-        title: item.label,
-        url: item.href,
-      })),
+      drill: section.drill,
+      items:
+        section.drill || section.items.length < 2
+          ? undefined
+          : section.items.map((item) => ({
+              title: item.label,
+              url: item.href,
+            })),
     }
   })
 
@@ -130,13 +136,60 @@ function SidebarNav() {
         />
       </SidebarHeader>
       <SidebarContent>
-        {navMain.length > 0 ? <NavMain label={label} items={navMain} /> : null}
-        {shortcuts.length > 0 ? (
-          <NavProjects label="Shortcuts" projects={shortcuts} />
-        ) : null}
+        {module ? (
+          <NavModule module={module} />
+        ) : (
+          <>
+            {navMain.length > 0 ? <NavMain label={label} items={navMain} /> : null}
+            {shortcuts.length > 0 ? (
+              <NavProjects label="Shortcuts" projects={shortcuts} />
+            ) : null}
+          </>
+        )}
       </SidebarContent>
+      <SidebarFooter>
+        {settingsSection && module?.id !== "settings" ? (
+          <NavMain
+            items={[
+              {
+                title: settingsSection.title,
+                url: settingsSection.items[0]?.href ?? "#",
+                icon: <Settings2Icon />,
+                drill: true,
+              },
+            ]}
+          />
+        ) : null}
+        <SidebarUser />
+      </SidebarFooter>
     </>
   )
+}
+
+function SidebarUser() {
+  const [user, setUser] = React.useState({
+    name: "Account",
+    email: "",
+    avatar: "",
+  })
+
+  React.useEffect(() => {
+    const supabase = createClient()
+    void supabase.auth.getUser().then(async ({ data }) => {
+      const current = data.user
+      if (!current) return
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("display_name, email")
+        .eq("id", current.id)
+        .maybeSingle()
+      const email = profile?.email || current.email || ""
+      const name = profile?.display_name || email || "Account"
+      setUser({ name, email, avatar: "" })
+    })
+  }, [])
+
+  return <NavUser user={user} />
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
@@ -145,9 +198,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <Suspense fallback={<SidebarNavFallback />}>
         <SidebarNav />
       </Suspense>
-      <SidebarFooter>
-        <NavUser user={user} />
-      </SidebarFooter>
       <SidebarRail />
     </Sidebar>
   )

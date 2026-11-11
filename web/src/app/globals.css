@@ -166,3 +166,30 @@
   mix-blend-mode: normal;
   display: block;
 }
+
+[data-sonner-toast] {
+  background: var(--popover) !important;
+  color: var(--popover-foreground) !important;
+  border: 1px solid var(--border) !important;
+  border-left: 4px solid var(--chart-2) !important;
+}
+
+[data-sonner-toast][data-type="success"] {
+  border-left-color: var(--positive) !important;
+}
+
+[data-sonner-toast][data-type="error"] {
+  border-left-color: var(--destructive) !important;
+}
+
+[data-sonner-toast] [data-icon] {
+  color: var(--chart-2);
+}
+
+[data-sonner-toast][data-type="success"] [data-icon] {
+  color: var(--positive);
+}
+
+[data-sonner-toast][data-type="error"] [data-icon] {
+  color: var(--destructive);
+}

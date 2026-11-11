@@ -1,17 +1,24 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import Link from "next/link"
+import { useSearchParams } from "next/navigation"
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
+import { MinusIcon, PlusIcon, XIcon } from "lucide-react"
 
-import { FlowFrame } from "@/components/flow/flow-frame"
+import { PosScreen } from "@/components/pos/pos-screen"
+import { UnsavedChangesDialog, useUnsavedChanges } from "@/components/unsaved-changes"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
@@ -20,6 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { toast } from "@/components/ui/sonner"
 import { money, quantity } from "@/lib/flow/format"
 import { callRpc } from "@/lib/flow/rpc"
 import type { BusinessRecord, FlowClient } from "@/lib/flow/use-business"
@@ -31,8 +39,8 @@ type ProductRow = {
   name: string
   price: number
   status: string
+  category_id: string | null
 }
-
 type Balance = { product_id: string; location_id: string; quantity: number }
 type LocationRow = { id: string; name: string; kind: string }
 type RegisterRow = {
@@ -49,78 +57,99 @@ type SessionRow = {
   opened_at: string
   status: string
 }
-type PaymentRow = { method: string; amount: number; status: string }
+type CustomerRow = {
+  id: string
+  name: string
+  phone: string | null
+  email: string | null
+  address: string | null
+  customer_type: string
+  status: string
+}
 type CartLine = { productId: string; name: string; price: number; quantity: number; onHand: number }
 type PayMethod = "cash" | "card" | "bank_transfer"
-type DeskMode = "sell" | "open" | "close"
+type DiscountMode = "amount" | "percent"
+type Receipt = {
+  number: string
+  billNumber: string
+  lines: { name: string; quantity: number; price: number }[]
+  subtotal: number
+  discount: number
+  tax: number
+  taxRate: number
+  total: number
+  method: string
+  tendered: number
+  change: number
+  customer: string | null
+}
 
-const DENOMS = [100, 50, 20, 10, 5, 1, 0.5, 0.25, 0.1, 0.05, 0.01] as const
 const PAY_METHODS: { id: PayMethod; label: string }[] = [
   { id: "bank_transfer", label: "Bank transfer" },
   { id: "cash", label: "Cash" },
   { id: "card", label: "Card" },
 ]
 
-function emptyCount(): Record<string, number> {
-  return Object.fromEntries(DENOMS.map((value) => [String(value), 0]))
-}
-
-function countTotal(count: Record<string, number>) {
-  return DENOMS.reduce((sum, value) => sum + value * (Number(count[String(value)]) || 0), 0)
-}
-
-function countPayload(count: Record<string, number>) {
-  const payload: Record<string, number> = {}
-  for (const value of DENOMS) {
-    const qty = Number(count[String(value)]) || 0
-    if (qty > 0) payload[String(value)] = qty
-  }
-  return payload
-}
-
 export function PosDesk({ businessKey }: { businessKey: string }) {
   return (
-    <FlowFrame
+    <PosScreen
       businessKey={businessKey}
-      title="POS"
-      description="Open a register, sell from its warehouse, then close with a cash count."
+      title="Sell"
+      description="Take payment from the open register."
     >
-      {({ business, supabase }) => <Desk business={business} supabase={supabase} />}
-    </FlowFrame>
+      {({ business, supabase }) => <Desk businessKey={businessKey} business={business} supabase={supabase} />}
+    </PosScreen>
   )
 }
 
-function Desk({ business, supabase }: { business: BusinessRecord; supabase: FlowClient }) {
+function Desk({
+  businessKey,
+  business,
+  supabase,
+}: {
+  businessKey: string
+  business: BusinessRecord
+  supabase: FlowClient
+}) {
   const [products, setProducts] = useState<ProductRow[]>([])
+  const [categories, setCategories] = useState<{ id: string; name: string }[]>([])
   const [balances, setBalances] = useState<Balance[]>([])
   const [locations, setLocations] = useState<LocationRow[]>([])
   const [registers, setRegisters] = useState<RegisterRow[]>([])
+  const [customers, setCustomers] = useState<CustomerRow[]>([])
   const [session, setSession] = useState<SessionRow | null>(null)
-  const [payments, setPayments] = useState<PaymentRow[]>([])
   const [registerId, setRegisterId] = useState("")
-  const [adding, setAdding] = useState(false)
-  const [registerName, setRegisterName] = useState("")
-  const [storeId, setStoreId] = useState("")
-  const [warehouseId, setWarehouseId] = useState("")
-  const [mode, setMode] = useState<DeskMode>("sell")
-  const [cashCount, setCashCount] = useState(emptyCount)
   const [search, setSearch] = useState("")
+  const [customerQuery, setCustomerQuery] = useState("")
+  const [customerId, setCustomerId] = useState("")
+  const [customerIndex, setCustomerIndex] = useState(0)
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState("")
+  const [newPhone, setNewPhone] = useState("")
+  const [newAddress, setNewAddress] = useState("")
   const [cart, setCart] = useState<CartLine[]>([])
   const [notes, setNotes] = useState("")
   const [method, setMethod] = useState<PayMethod>("card")
   const [tendered, setTendered] = useState("")
-  const [message, setMessage] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [taxRate, setTaxRate] = useState(0)
+  const [discountMode, setDiscountMode] = useState<DiscountMode>("amount")
+  const [discountInput, setDiscountInput] = useState("")
+  const [hasHold, setHasHold] = useState(false)
+  const [receipt, setReceipt] = useState<Receipt | null>(null)
+  const quoteParams = useSearchParams()
+  const quoteId = quoteParams.get("quote")
+  const loadedQuote = useRef<string | null>(null)
 
   const load = useCallback(async () => {
-    const [productRes, balanceRes, locationRes, registerRes] = await Promise.all([
+    const [productRes, categoryRes, balanceRes, locationRes, registerRes, customerRes, settingsRes] = await Promise.all([
       supabase
         .from("products")
-        .select("id, sku, name, price, status")
+        .select("id, sku, name, price, status, category_id")
         .eq("business_id", business.id)
         .eq("status", "active")
         .order("name"),
+      supabase.from("categories").select("id, name").eq("business_id", business.id).order("name"),
       supabase
         .from("inventory_balances")
         .select("product_id, location_id, quantity")
@@ -132,23 +161,34 @@ function Desk({ business, supabase }: { business: BusinessRecord; supabase: Flow
         .eq("business_id", business.id)
         .eq("status", "active")
         .order("name"),
+      supabase
+        .from("customers")
+        .select("id, name, phone, email, address, customer_type, status")
+        .eq("business_id", business.id)
+        .order("name")
+        .limit(1000),
+      supabase.from("business_settings").select("tax_rate").eq("business_id", business.id).maybeSingle(),
     ])
-    const error = productRes.error || balanceRes.error || locationRes.error || registerRes.error
-    if (error) setMessage(error.message)
+    const error =
+      productRes.error ||
+      categoryRes.error ||
+      balanceRes.error ||
+      locationRes.error ||
+      registerRes.error ||
+      customerRes.error ||
+      settingsRes.error
+    if (error) toast.error(error.message)
 
-    const places = locationRes.data ?? []
     const tills = (registerRes.data ?? []).filter(
       (row): row is RegisterRow => Boolean(row.location_id && row.warehouse_id),
     )
     setProducts(productRes.data ?? [])
+    setCategories(categoryRes.data ?? [])
     setBalances(balanceRes.data ?? [])
-    setLocations(places)
+    setLocations(locationRes.data ?? [])
     setRegisters(tills)
-    setStoreId(
-      (current) =>
-        current || places.find((place) => place.kind === "store" || place.kind === "site")?.id || "",
-    )
-    setWarehouseId((current) => current || places.find((place) => place.kind === "warehouse")?.id || "")
+    setCustomers(customerRes.data ?? [])
+    setTaxRate(Number(settingsRes.data?.tax_rate ?? 0))
 
     const nextRegisterId =
       registerId && tills.some((row) => row.id === registerId) ? registerId : tills[0]?.id || ""
@@ -156,7 +196,7 @@ function Desk({ business, supabase }: { business: BusinessRecord; supabase: Flow
 
     if (!nextRegisterId) {
       setSession(null)
-      setPayments([])
+      setHasHold(false)
       return
     }
 
@@ -167,7 +207,7 @@ function Desk({ business, supabase }: { business: BusinessRecord; supabase: Flow
       .eq("register_id", nextRegisterId)
       .eq("status", "open")
       .maybeSingle()
-    if (sessionRes.error) setMessage(sessionRes.error.message)
+    if (sessionRes.error) toast.error(sessionRes.error.message)
     const open = sessionRes.data
     setSession(
       open
@@ -181,19 +221,15 @@ function Desk({ business, supabase }: { business: BusinessRecord; supabase: Flow
         : null,
     )
 
-    if (open) {
-      const paymentRes = await supabase
-        .from("payments")
-        .select("method, amount, status")
-        .eq("business_id", business.id)
-        .eq("register_session_id", open.id)
-      if (paymentRes.error) setMessage(paymentRes.error.message)
-      setPayments(paymentRes.data ?? [])
-      setMode((current) => (current === "open" ? "sell" : current))
-    } else {
-      setPayments([])
-      setMode((current) => (current === "close" ? "sell" : current))
-    }
+    const heldRes = await supabase
+      .from("orders")
+      .select("id")
+      .eq("business_id", business.id)
+      .eq("register_id", nextRegisterId)
+      .eq("status", "held")
+      .maybeSingle()
+    if (heldRes.error) toast.error(heldRes.error.message)
+    setHasHold(Boolean(heldRes.data))
   }, [business.id, registerId, supabase])
 
   useEffect(() => {
@@ -205,14 +241,9 @@ function Desk({ business, supabase }: { business: BusinessRecord; supabase: Flow
     const map = new Map(locations.map((location) => [location.id, location.name]))
     return (id: string) => map.get(id) ?? "Location"
   }, [locations])
-  const stores = locations.filter((location) => location.kind === "store" || location.kind === "site")
-  const warehouses = locations.filter((location) => location.kind === "warehouse")
-  const storeItems = Object.fromEntries(stores.map((location) => [location.id, location.name]))
-  const warehouseItems = Object.fromEntries(warehouses.map((location) => [location.id, location.name]))
   const registerItems = Object.fromEntries(
     registers.map((row) => [row.id, `${row.name} · ${placeName(row.location_id)}`]),
   )
-
   const stock = useMemo(() => {
     const map = new Map<string, number>()
     for (const row of balances) {
@@ -221,141 +252,256 @@ function Desk({ business, supabase }: { business: BusinessRecord; supabase: Flow
     return map
   }, [balances, selected?.warehouse_id])
 
+  useEffect(() => {
+    if (!quoteId || loadedQuote.current === quoteId || products.length === 0) return
+    loadedQuote.current = quoteId
+    void (async () => {
+      const [quoteRes, lineRes] = await Promise.all([
+        supabase
+          .from("quotations")
+          .select("customer_id, status")
+          .eq("business_id", business.id)
+          .eq("id", quoteId)
+          .maybeSingle(),
+        supabase
+          .from("quotation_lines")
+          .select("product_id, description, quantity, unit_price")
+          .eq("business_id", business.id)
+          .eq("quotation_id", quoteId),
+      ])
+      if (quoteRes.error || lineRes.error) {
+        toast.error(quoteRes.error?.message ?? lineRes.error?.message ?? "Could not load the quotation")
+        return
+      }
+      if (quoteRes.data?.status === "accepted") {
+        toast.error("That quote is already an order.")
+        return
+      }
+      const next = (lineRes.data ?? []).flatMap((line) => {
+        if (!line.product_id) return []
+        return [
+          {
+            productId: line.product_id,
+            name: line.description,
+            price: Number(line.unit_price),
+            quantity: Number(line.quantity),
+            onHand: stock.get(line.product_id) ?? Number(line.quantity),
+          },
+        ]
+      })
+      if (next.length === 0) {
+        toast.error("That quotation has no products to sell.")
+        return
+      }
+      setCart(next)
+      setCustomerId(quoteRes.data?.customer_id ?? "")
+      setDiscountMode("amount")
+      setDiscountInput("")
+      toast.success("Quotation loaded into the cart.")
+    })()
+  }, [business.id, products.length, quoteId, stock, supabase])
+
+  const categoryName = useMemo(() => {
+    const map = new Map(categories.map((category) => [category.id, category.name]))
+    return (id: string | null) => (id ? map.get(id) ?? "Products" : "Products")
+  }, [categories])
+
   const query = search.trim().toLowerCase()
   const sellable = products.filter((product) => {
     if ((stock.get(product.id) ?? 0) <= 0) return false
     if (!query) return true
     return product.name.toLowerCase().includes(query) || product.sku.toLowerCase().includes(query)
   })
+  const groups = useMemo(() => {
+    const map = new Map<string, ProductRow[]>()
+    for (const product of sellable) {
+      const label = categoryName(product.category_id)
+      map.set(label, [...(map.get(label) ?? []), product])
+    }
+    return [...map.entries()]
+  }, [categoryName, sellable])
 
-  const total = cart.reduce((sum, line) => sum + line.price * line.quantity, 0)
+  const customerNeedle = customerQuery.trim().toLowerCase()
+  const customerMatches = customers.filter((customer) => {
+    if (customer.status !== "active" || !customerNeedle) return false
+    return [customer.name, customer.phone, customer.email, customer.address]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(customerNeedle)
+  }).slice(0, 6)
+  const selectedCustomer = customers.find((customer) => customer.id === customerId) ?? null
+  const activeCustomerIndex = customerMatches.length === 0 ? 0 : Math.min(customerIndex, customerMatches.length - 1)
+
+  function chooseCustomer(customer: CustomerRow) {
+    setCustomerId(customer.id)
+    setCustomerQuery("")
+    setCustomerIndex(0)
+  }
+
+  function onCustomerKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (selectedCustomer || customerMatches.length === 0) return
+    if (event.key === "ArrowDown") {
+      event.preventDefault()
+      setCustomerIndex((activeCustomerIndex + 1) % customerMatches.length)
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault()
+      setCustomerIndex((activeCustomerIndex - 1 + customerMatches.length) % customerMatches.length)
+    } else if (event.key === "Enter") {
+      const customer = customerMatches[activeCustomerIndex]
+      if (!customer) return
+      event.preventDefault()
+      chooseCustomer(customer)
+    }
+  }
+
+  const subtotal = cart.reduce((sum, line) => sum + line.price * line.quantity, 0)
+  const requestedDiscount =
+    discountMode === "percent" ? (subtotal * (Number(discountInput) || 0)) / 100 : Number(discountInput) || 0
+  const discount = Math.round(Math.min(Math.max(requestedDiscount, 0), subtotal) * 100) / 100
+  const taxable = Math.round((subtotal - discount) * 100) / 100
+  const tax = Math.round((taxable * taxRate) / 100 * 100) / 100
+  const total = Math.round((taxable + tax) * 100) / 100
+  const unsaved = useUnsavedChanges(cart.length > 0)
   const cashReceived = Number(tendered) || 0
   const changeDue = method === "cash" ? Math.max(0, cashReceived - total) : 0
-  const counted = countTotal(cashCount)
-
-  const sessionTotals = useMemo(() => {
-    const succeeded = payments.filter((row) => row.status === "succeeded")
-    const by = (want: PayMethod) =>
-      succeeded.filter((row) => row.method === want).reduce((sum, row) => sum + Number(row.amount), 0)
-    const cashSales = by("cash")
-    const opening = session?.opening_cash ?? 0
-    return {
-      cashSales,
-      cardSales: by("card"),
-      bankSales: by("bank_transfer"),
-      saleCount: succeeded.length,
-      expectedCash: opening + cashSales,
-    }
-  }, [payments, session?.opening_cash])
-
   const registerOpen = Boolean(session)
 
   function chooseRegister(next: string) {
     setRegisterId(next)
     setCart([])
     setNotes("")
-    setMessage(null)
-    setMode("sell")
-    setCashCount(emptyCount())
+    setDiscountInput("")
+    setCustomerId("")
   }
 
-  function add(product: ProductRow) {
+  function setQty(product: ProductRow, next: number) {
     if (!registerOpen) return
     const onHand = stock.get(product.id) ?? 0
+    const quantity = Math.min(onHand, Math.max(0, next))
     setCart((current) => {
+      if (quantity <= 0) return current.filter((line) => line.productId !== product.id)
       const existing = current.find((line) => line.productId === product.id)
-      if (existing) {
-        if (existing.quantity + 1 > onHand) return current
-        return current.map((line) =>
-          line.productId === product.id ? { ...line, quantity: line.quantity + 1, onHand } : line,
-        )
+      if (!existing) {
+        return [...current, { productId: product.id, name: product.name, price: Number(product.price), quantity, onHand }]
       }
-      return [
-        ...current,
-        { productId: product.id, name: product.name, price: Number(product.price), quantity: 1, onHand },
-      ]
+      return current.map((line) => (line.productId === product.id ? { ...line, quantity, onHand } : line))
     })
   }
 
-  function setDenom(value: number, raw: string) {
-    const qty = Math.max(0, Math.floor(Number(raw) || 0))
-    setCashCount((current) => ({ ...current, [String(value)]: qty }))
+  function openNewCustomer() {
+    const typed = customerQuery.trim()
+    const digits = typed.replace(/[^\d+]/g, "")
+    const looksLikePhone = typed.length > 0 && digits.length >= typed.replace(/\s/g, "").length - 1 && /\d/.test(typed)
+    setNewName(looksLikePhone ? "" : typed)
+    setNewPhone(looksLikePhone ? typed : "")
+    setNewAddress("")
+    setCreating(true)
   }
 
-  async function saveRegister() {
-    const name = registerName.trim()
-    if (!name || !storeId || !warehouseId) return
-    setSaving(true)
-    setMessage(null)
+  async function addCustomer() {
+    const name = newName.trim()
+    const phone = newPhone.trim()
+    if (!name || !phone) {
+      toast.error("Name and phone number are required.")
+      return
+    }
+    setBusy(true)
     const { data, error } = await supabase
-      .from("registers")
+      .from("customers")
       .insert({
         business_id: business.id,
         name,
-        location_id: storeId,
-        warehouse_id: warehouseId,
+        phone,
+        address: newAddress.trim() || null,
+        customer_type: "individual",
+        status: "active",
       })
-      .select("id")
+      .select("id, name, phone, email, address, customer_type, status")
       .single()
-    setSaving(false)
-    if (error) {
-      setMessage(error.message)
+    setBusy(false)
+    if (error || !data) {
+      toast.error(error?.message ?? "Could not add the customer")
       return
     }
-    setRegisterName("")
-    setAdding(false)
-    setCart([])
-    setRegisterId(data.id)
+    setCustomers((current) => [...current.filter((customer) => customer.id !== data.id), data].sort((a, b) => a.name.localeCompare(b.name)))
+    setCustomerId(data.id)
+    setCustomerQuery("")
+    setCreating(false)
   }
 
-  async function openRegister() {
-    if (!selected) return
+  function onProductKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter" || !registerOpen) return
+    const sku = search.trim().toLowerCase()
+    if (!sku) return
+    const product = products.find((item) => item.sku.toLowerCase() === sku)
+    if (!product) return
+    event.preventDefault()
+    const current = cart.find((line) => line.productId === product.id)
+    setQty(product, (current?.quantity ?? 0) + 1)
+    setSearch("")
+  }
+
+  async function holdCart() {
+    if (!selected || !registerOpen || cart.length === 0) return
     setBusy(true)
-    setMessage(null)
     try {
-      await callRpc(supabase, "open_register_session", {
+      await callRpc(supabase, "hold_pos_cart", {
         p_business_id: business.id,
         p_register_id: selected.id,
-        p_opening_cash: counted,
-        p_opening_count: countPayload(cashCount),
+        p_lines: cart.map((line) => ({ product_id: line.productId, quantity: line.quantity })),
+        p_customer_id: customerId || null,
+        p_notes: notes.trim() || null,
+        p_discount: discount,
       })
-      setCashCount(emptyCount())
-      setMode("sell")
-      setMessage(`Register opened with ${money(counted, business.currency)} in the drawer.`)
-      await load()
+      setCart([])
+      setNotes("")
+      setCustomerId("")
+      setDiscountInput("")
+      setHasHold(true)
+      toast.success("Cart held on this register.")
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not open the register")
+      toast.error(error instanceof Error ? error.message : "Could not hold the cart")
     } finally {
       setBusy(false)
     }
   }
 
-  async function closeRegister() {
-    if (!session) return
+  async function resumeHold() {
+    if (!selected || !registerOpen) return
     setBusy(true)
-    setMessage(null)
     try {
-      const result = await callRpc<{
-        cash_difference: number
-        expected_cash: number
-        counted_cash: number
-      }>(supabase, "close_register_session", {
+      const held = await callRpc<{
+        customer_id: string | null
+        notes: string | null
+        discount: number
+        lines: { product_id: string; name: string; quantity: number; price: number }[]
+      } | null>(supabase, "take_pos_hold", {
         p_business_id: business.id,
-        p_session_id: session.id,
-        p_counted_cash: counted,
-        p_closing_count: countPayload(cashCount),
+        p_register_id: selected.id,
       })
-      setCashCount(emptyCount())
-      setCart([])
-      setNotes("")
-      setMode("sell")
-      const diff = Number(result.cash_difference)
-      setMessage(
-        `Register closed. Expected ${money(Number(result.expected_cash), business.currency)}, counted ${money(Number(result.counted_cash), business.currency)} (${diff === 0 ? "even" : money(diff, business.currency)}).`,
+      if (!held) {
+        setHasHold(false)
+        toast.error("No held cart on this register.")
+        return
+      }
+      setCart(
+        held.lines.map((line) => ({
+          productId: line.product_id,
+          name: line.name,
+          price: Number(line.price),
+          quantity: Number(line.quantity),
+          onHand: stock.get(line.product_id) ?? Number(line.quantity),
+        })),
       )
-      await load()
+      setCustomerId(held.customer_id ?? "")
+      setNotes(held.notes ?? "")
+      setDiscountMode("amount")
+      setDiscountInput(Number(held.discount) > 0 ? String(held.discount) : "")
+      setHasHold(false)
+      toast.success("Held cart restored.")
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not close the register")
+      toast.error(error instanceof Error ? error.message : "Could not restore the held cart")
     } finally {
       setBusy(false)
     }
@@ -364,67 +510,76 @@ function Desk({ business, supabase }: { business: BusinessRecord; supabase: Flow
   async function charge() {
     if (!selected || !registerOpen || cart.length === 0) return
     if (method === "cash" && cashReceived < total) {
-      setMessage("Cash received is less than the total.")
+      toast.error("Cash received is less than the total.")
       return
     }
     setBusy(true)
-    setMessage(null)
     try {
-      const sale = await callRpc<{ number: string; total: number; change: number; method: string }>(
-        supabase,
-        "complete_pos_sale",
-        {
-          p_business_id: business.id,
-          p_register_id: selected.id,
-          p_lines: cart.map((line) => ({ product_id: line.productId, quantity: line.quantity })),
-          p_method: method,
-          p_tendered: method === "cash" ? cashReceived : null,
-          p_notes: notes.trim() || null,
-        },
-      )
+      const sale = await callRpc<{
+        number: string
+        bill_number: string
+        lines: { name: string; quantity: number; price: number }[]
+        subtotal: number
+        discount: number
+        tax: number
+        tax_rate: number
+        total: number
+        method: string
+        tendered: number
+        change: number
+      }>(supabase, "complete_pos_sale", {
+        p_business_id: business.id,
+        p_register_id: selected.id,
+        p_lines: cart.map((line) => ({ product_id: line.productId, quantity: line.quantity })),
+        p_method: method,
+        p_tendered: method === "cash" ? cashReceived : null,
+        p_notes: notes.trim() || null,
+        p_customer_id: customerId || null,
+        p_discount: discount,
+      })
+      const chargedName = selectedCustomer?.name ?? null
+      setReceipt({
+        number: sale.number,
+        billNumber: sale.bill_number,
+        lines: sale.lines ?? [],
+        subtotal: Number(sale.subtotal),
+        discount: Number(sale.discount),
+        tax: Number(sale.tax),
+        taxRate: Number(sale.tax_rate),
+        total: Number(sale.total),
+        method: sale.method,
+        tendered: Number(sale.tendered),
+        change: Number(sale.change),
+        customer: chargedName,
+      })
       setCart([])
       setNotes("")
       setTendered("")
-      const change = Number(sale.change)
-      setMessage(
-        change > 0
-          ? `Sale ${sale.number} · ${money(Number(sale.total), business.currency)} · change ${money(change, business.currency)}`
-          : `Sale ${sale.number} posted for ${money(Number(sale.total), business.currency)}.`,
-      )
+      setCustomerId("")
+      setDiscountInput("")
+      toast.success(`Sale ${sale.number} posted for ${money(Number(sale.total), business.currency)}.`)
       await load()
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not complete the sale")
+      toast.error(error instanceof Error ? error.message : "Could not complete the sale")
     } finally {
       setBusy(false)
     }
   }
 
-  const showForm = registers.length === 0 || adding
-
   return (
-    <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
+      <UnsavedChangesDialog open={unsaved.open} onStay={unsaved.stay} onLeave={unsaved.leave} />
       <div className="flex flex-col gap-4">
-        <Card>
-          <CardHeader className="gap-3">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <CardTitle>Register</CardTitle>
-                <CardDescription>
-                  Belongs to a store and sells stock from the attached warehouse.
-                </CardDescription>
-              </div>
-              {registerOpen && selected ? (
-                <Button type="button" variant="outline" onClick={() => {
-                  setCashCount(emptyCount())
-                  setMode("close")
-                }}>
-                  Close register
-                </Button>
-              ) : null}
-            </div>
+        <div className="rounded-lg border px-4 py-3 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p>
+              {registerOpen && selected
+                ? `Ready. ${selected.name} is open at ${placeName(selected.location_id)}. Stock from ${placeName(selected.warehouse_id)}.`
+                : "Sell is locked until you open a register."}
+            </p>
             {registers.length > 0 ? (
               <Select value={registerId} items={registerItems} onValueChange={(value) => chooseRegister(value ?? "")}>
-                <SelectTrigger className="w-full sm:w-80">
+                <SelectTrigger className="w-full sm:w-64">
                   <SelectValue placeholder="Register" />
                 </SelectTrigger>
                 <SelectContent>
@@ -435,188 +590,80 @@ function Desk({ business, supabase }: { business: BusinessRecord; supabase: Flow
                   ))}
                 </SelectContent>
               </Select>
-            ) : null}
-            {selected ? (
-              <p className="text-sm text-muted-foreground">
-                {placeName(selected.location_id)} · stock from {placeName(selected.warehouse_id)}
-                {session
-                  ? ` · open with ${money(session.opening_cash, business.currency)}`
-                  : " · closed"}
-              </p>
-            ) : null}
-            {registers.length > 0 && !adding ? (
-              <Button type="button" variant="outline" className="w-fit" onClick={() => setAdding(true)}>
-                Add register
+            ) : (
+              <Button nativeButton={false} variant="outline" render={<Link href={`/app/${businessKey}/pos/register`} />}>
+                Add a register
               </Button>
-            ) : null}
-            {showForm ? (
-              stores.length === 0 || warehouses.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  Add a store and a warehouse before opening a register.
-                </p>
-              ) : (
-                <div className="flex flex-col gap-3 rounded-lg border p-3">
-                  <Input
-                    placeholder="Register name"
-                    value={registerName}
-                    onChange={(event) => setRegisterName(event.target.value)}
-                  />
-                  <Select value={storeId} items={storeItems} onValueChange={(value) => setStoreId(value ?? "")}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Store" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {stores.map((location) => (
-                        <SelectItem key={location.id} value={location.id}>
-                          {location.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    value={warehouseId}
-                    items={warehouseItems}
-                    onValueChange={(value) => setWarehouseId(value ?? "")}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Warehouse" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {warehouses.map((location) => (
-                        <SelectItem key={location.id} value={location.id}>
-                          {location.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      disabled={saving || !registerName.trim() || !storeId || !warehouseId}
-                      onClick={() => void saveRegister()}
-                    >
-                      {saving ? "Saving…" : "Save register"}
-                    </Button>
-                    {registers.length > 0 ? (
-                      <Button type="button" variant="ghost" onClick={() => setAdding(false)}>
-                        Cancel
-                      </Button>
-                    ) : null}
-                  </div>
-                </div>
-              )
-            ) : null}
-          </CardHeader>
-        </Card>
-
-        {!registerOpen && mode !== "open" ? (
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm">
-            Register closed. Open a register to begin selling.
+            )}
           </div>
-        ) : null}
+        </div>
 
-        {registerOpen ? (
-          <div className="grid gap-2 rounded-lg border px-4 py-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-            <div>
-              <div className="text-muted-foreground">Opening</div>
-              <div className="font-medium tabular-nums">{money(session?.opening_cash ?? 0, business.currency)}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground">Cash sales</div>
-              <div className="font-medium tabular-nums">{money(sessionTotals.cashSales, business.currency)}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground">Card / bank</div>
-              <div className="font-medium tabular-nums">
-                {money(sessionTotals.cardSales + sessionTotals.bankSales, business.currency)}
-              </div>
-            </div>
-            <div>
-              <div className="text-muted-foreground">Expected cash</div>
-              <div className="font-medium tabular-nums">{money(sessionTotals.expectedCash, business.currency)}</div>
-            </div>
-          </div>
-        ) : null}
+        <Input
+          placeholder="Search products or scan a SKU and press Enter…"
+          value={search}
+          disabled={!registerOpen}
+          onChange={(event) => setSearch(event.target.value)}
+          onKeyDown={onProductKeyDown}
+        />
 
-        {mode === "open" || mode === "close" ? (
-          <CashCounter
-            title={mode === "open" ? "Opening cash count" : "Closing cash count"}
-            description={
-              mode === "open"
-                ? "Count the notes and coins already in the drawer."
-                : "Count the cash left in the drawer, then close."
-            }
-            currency={business.currency}
-            count={cashCount}
-            total={counted}
-            onChange={setDenom}
-            breakdown={
-              mode === "close" && session
-                ? [
-                    ["Opening cash", session.opening_cash],
-                    ["Cash sales", sessionTotals.cashSales],
-                    ["Expected cash", sessionTotals.expectedCash],
-                    ["Counted cash", counted],
-                    ["Over / short", counted - sessionTotals.expectedCash],
-                    ["Card", sessionTotals.cardSales],
-                    ["Bank transfer", sessionTotals.bankSales],
-                    ["Sales", sessionTotals.saleCount],
-                  ]
-                : null
-            }
-            onCancel={() => {
-              setCashCount(emptyCount())
-              setMode("sell")
-            }}
-            actionLabel={mode === "open" ? (busy ? "Opening…" : "Open register") : busy ? "Closing…" : "Close register"}
-            actionDisabled={busy || !selected}
-            onAction={() => void (mode === "open" ? openRegister() : closeRegister())}
-          />
+        {!selected ? (
+          <p className="text-sm text-muted-foreground">Add a register before selling.</p>
+        ) : !registerOpen ? (
+          <p className="text-sm text-muted-foreground">Open the register, then search the catalog.</p>
+        ) : sellable.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No stock in {placeName(selected.warehouse_id)}. Deliver a shipment there, then come back.
+          </p>
         ) : (
-          <Card>
-            <CardHeader>
-              <CardTitle>Catalog</CardTitle>
-              <CardDescription>
-                {registerOpen
-                  ? "Search and add stock from the attached warehouse."
-                  : "Open the register first, then sell."}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              <Input
-                placeholder="Search products…"
-                value={search}
-                disabled={!registerOpen}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-              {!selected ? (
-                <p className="text-sm text-muted-foreground">Add a register to start.</p>
-              ) : !registerOpen ? (
-                <p className="text-sm text-muted-foreground">
-                  Software is ready. Open the register to begin selling.
-                </p>
-              ) : sellable.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No stock in {placeName(selected.warehouse_id)}. Deliver a shipment there, then come back.
-                </p>
-              ) : (
-                sellable.map((product) => (
-                  <div key={product.id} className="flex items-center justify-between gap-3 rounded-lg border p-3">
-                    <div>
-                      <div className="font-medium">{product.name}</div>
-                      <div className="text-sm text-muted-foreground">
-                        {product.sku} · {quantity(stock.get(product.id) ?? 0)} on hand ·{" "}
-                        {money(Number(product.price), business.currency)}
-                      </div>
-                    </div>
-                    <Button type="button" onClick={() => add(product)}>
-                      Add
-                    </Button>
-                  </div>
-                ))
-              )}
-            </CardContent>
-          </Card>
+          groups.map(([label, items]) => (
+            <section key={label} className="flex flex-col gap-3">
+              <h2 className="text-xs tracking-wide text-muted-foreground uppercase">{label}</h2>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {items.map((product) => {
+                  const line = cart.find((item) => item.productId === product.id)
+                  const onHand = stock.get(product.id) ?? 0
+                  return (
+                    <Card key={product.id} className="gap-3 py-4">
+                      <CardHeader className="px-4">
+                        <CardDescription>{product.sku}</CardDescription>
+                        <CardTitle className="text-base">{product.name}</CardTitle>
+                      </CardHeader>
+                      <CardContent className="flex items-center justify-between gap-3 px-4">
+                        <div className="font-medium tabular-nums">{money(Number(product.price), business.currency)}</div>
+                        {line ? (
+                          <div className="flex items-center gap-1">
+                            <Button
+                              type="button"
+                              size="icon-sm"
+                              variant="outline"
+                              onClick={() => setQty(product, line.quantity - 1)}
+                            >
+                              <MinusIcon />
+                            </Button>
+                            <span className="w-8 text-center text-sm tabular-nums">{line.quantity}</span>
+                            <Button
+                              type="button"
+                              size="icon-sm"
+                              variant="outline"
+                              disabled={line.quantity >= onHand}
+                              onClick={() => setQty(product, line.quantity + 1)}
+                            >
+                              <PlusIcon />
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button type="button" size="sm" onClick={() => setQty(product, 1)}>
+                            Add
+                          </Button>
+                        )}
+                      </CardContent>
+                      <p className="px-4 text-xs text-muted-foreground">{quantity(onHand)} on hand</p>
+                    </Card>
+                  )
+                })}
+              </div>
+            </section>
+          ))
         )}
       </div>
 
@@ -624,10 +671,93 @@ function Desk({ business, supabase }: { business: BusinessRecord; supabase: Flow
         <CardHeader>
           <CardDescription>Current order</CardDescription>
           <CardTitle className="text-3xl tabular-nums">{money(total, business.currency)}</CardTitle>
+          {hasHold ? (
+            <Button type="button" variant="outline" disabled={busy || cart.length > 0} onClick={() => void resumeHold()}>
+              Resume held cart
+            </Button>
+          ) : null}
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2">
+            <div className="flex gap-2">
+              <Input
+                placeholder="Search CRM customers…"
+                value={customerQuery}
+                disabled={!registerOpen}
+                role="combobox"
+                aria-expanded={customerMatches.length > 0 && !selectedCustomer}
+                aria-activedescendant={
+                  customerMatches.length > 0 && !selectedCustomer
+                    ? `pos-customer-option-${customerMatches[activeCustomerIndex]?.id}`
+                    : undefined
+                }
+                onChange={(event) => {
+                  setCustomerQuery(event.target.value)
+                  setCustomerIndex(0)
+                  if (customerId) setCustomerId("")
+                }}
+                onKeyDown={onCustomerKeyDown}
+              />
+              <Button type="button" variant="outline" disabled={!registerOpen || busy} onClick={openNewCustomer}>
+                New
+              </Button>
+            </div>
+            {selectedCustomer ? (
+              <div className="flex items-start gap-2 rounded-lg border px-3 py-2">
+                <Link
+                  href={`/app/${businessKey}/crm/${selectedCustomer.id}`}
+                  className="min-w-0 flex-1 rounded-md text-sm hover:bg-muted"
+                >
+                  <p className="font-medium">{selectedCustomer.name}</p>
+                  <p className="text-muted-foreground">
+                    {[selectedCustomer.phone, selectedCustomer.email].filter(Boolean).join(" · ") || "No phone or email"}
+                  </p>
+                  {selectedCustomer.address ? (
+                    <p className="text-muted-foreground">{selectedCustomer.address}</p>
+                  ) : null}
+                </Link>
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label="Remove customer"
+                  onClick={() => setCustomerId("")}
+                >
+                  <XIcon />
+                </Button>
+              </div>
+            ) : null}
+            {customerNeedle && customerMatches.length === 0 && !selectedCustomer ? (
+              <p className="text-sm text-muted-foreground">No CRM customer matches that search.</p>
+            ) : null}
+            {customerMatches.length > 0 && !selectedCustomer ? (
+              <div className="overflow-hidden rounded-lg border" role="listbox">
+                {customerMatches.map((customer, index) => (
+                  <button
+                    key={customer.id}
+                    id={`pos-customer-option-${customer.id}`}
+                    type="button"
+                    role="option"
+                    aria-selected={index === activeCustomerIndex}
+                    className={cn(
+                      "block w-full px-3 py-2 text-left text-sm",
+                      index === activeCustomerIndex ? "bg-muted" : "hover:bg-muted",
+                    )}
+                    onMouseEnter={() => setCustomerIndex(index)}
+                    onClick={() => chooseCustomer(customer)}
+                  >
+                    <span className="block">{customer.name}</span>
+                    <span className="block text-muted-foreground">
+                      {[customer.phone, customer.email, customer.address].filter(Boolean).join(" · ") || "No contact details"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
           {cart.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Scan or tap items to build the cart.</p>
+            <p className="text-sm text-muted-foreground">Add items to build the order.</p>
           ) : (
             cart.map((line) => (
               <div key={line.productId} className="flex items-center justify-between gap-2">
@@ -635,38 +765,71 @@ function Desk({ business, supabase }: { business: BusinessRecord; supabase: Flow
                   <div className="font-medium">{line.name}</div>
                   <div className="text-sm text-muted-foreground">{money(line.price, business.currency)} each</div>
                 </div>
-                <Input
-                  className="w-20"
-                  type="number"
-                  min="1"
-                  max={line.onHand}
-                  step="1"
-                  disabled={!registerOpen}
-                  value={line.quantity}
-                  onChange={(event) => {
-                    const next = Math.min(line.onHand, Math.max(1, Number(event.target.value) || 1))
-                    setCart((current) =>
-                      current.map((item) =>
-                        item.productId === line.productId ? { ...item, quantity: next } : item,
-                      ),
-                    )
-                  }}
-                />
+                <span className="text-sm tabular-nums">{line.quantity}</span>
               </div>
             ))
           )}
 
+          <Dialog open={creating} onOpenChange={setCreating}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>New CRM customer</DialogTitle>
+                <DialogDescription>Name and phone are required. Address can be added later.</DialogDescription>
+              </DialogHeader>
+              <form
+                className="flex flex-col gap-3"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  void addCustomer()
+                }}
+              >
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="pos-customer-name">Name</Label>
+                  <Input
+                    id="pos-customer-name"
+                    required
+                    value={newName}
+                    onChange={(event) => setNewName(event.target.value)}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="pos-customer-phone">Phone number</Label>
+                  <Input
+                    id="pos-customer-phone"
+                    required
+                    value={newPhone}
+                    onChange={(event) => setNewPhone(event.target.value)}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="pos-customer-address">Address</Label>
+                  <Input
+                    id="pos-customer-address"
+                    value={newAddress}
+                    onChange={(event) => setNewAddress(event.target.value)}
+                  />
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setCreating(false)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={busy || newName.trim().length === 0 || newPhone.trim().length === 0}>
+                    {busy ? "Saving…" : "Save customer"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+
           <Textarea
-            placeholder="Notes"
+            placeholder="Add a customer request, special handling, or internal note…"
             value={notes}
             disabled={!registerOpen}
             onChange={(event) => setNotes(event.target.value)}
           />
 
           <div className="space-y-2">
-            <div className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-              Select payment method
-            </div>
+            <div className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Select payment method</div>
             <div className="grid grid-cols-3 gap-2">
               {PAY_METHODS.map((option) => (
                 <Button
@@ -693,16 +856,47 @@ function Desk({ business, supabase }: { business: BusinessRecord; supabase: Flow
                 value={tendered}
                 onChange={(event) => setTendered(event.target.value)}
               />
-              <p className="text-sm text-muted-foreground">
-                Change {money(changeDue, business.currency)}
-              </p>
+              <p className="text-sm text-muted-foreground">Change {money(changeDue, business.currency)}</p>
             </div>
           ) : null}
+
+          <div className="flex gap-2">
+            <Select
+              value={discountMode}
+              items={{ amount: "Amount", percent: "Percent" }}
+              onValueChange={(value) => setDiscountMode(value === "percent" ? "percent" : "amount")}
+            >
+              <SelectTrigger className="w-28">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="amount">Amount</SelectItem>
+                <SelectItem value="percent">Percent</SelectItem>
+              </SelectContent>
+            </Select>
+            <Input
+              type="number"
+              min={0}
+              step="0.01"
+              placeholder={discountMode === "percent" ? "Discount %" : "Discount"}
+              value={discountInput}
+              disabled={!registerOpen}
+              onChange={(event) => setDiscountInput(event.target.value)}
+            />
+          </div>
 
           <div className="space-y-1 border-t pt-3 text-sm">
             <div className="flex justify-between">
               <span className="text-muted-foreground">Subtotal</span>
-              <span className="tabular-nums">{money(total, business.currency)}</span>
+              <span className="tabular-nums">{money(subtotal, business.currency)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Discount</span>
+              <span className="tabular-nums">{money(discount, business.currency)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Tax {taxRate}%</span>
+              <span className="tabular-nums">{money(tax, business.currency)}</span>
             </div>
             <div className="flex justify-between font-medium">
               <span>Total due</span>
@@ -710,113 +904,70 @@ function Desk({ business, supabase }: { business: BusinessRecord; supabase: Flow
             </div>
           </div>
 
-          {message ? <p className="text-sm">{message}</p> : null}
-
-          {!registerOpen ? (
-            <Button
-              type="button"
-              size="lg"
-              disabled={!selected || mode === "open"}
-              onClick={() => {
-                setCashCount(emptyCount())
-                setMode("open")
-              }}
-            >
-              Open register to sell
-            </Button>
+          {registerOpen ? (
+            <div className="flex flex-col gap-2">
+              <Button
+                type="button"
+                size="lg"
+                disabled={busy || cart.length === 0 || (method === "cash" && cashReceived < total)}
+                onClick={() => void charge()}
+              >
+                {busy ? "Charging…" : `Charge ${money(total, business.currency)}`}
+              </Button>
+              <Button type="button" variant="outline" disabled={busy || cart.length === 0} onClick={() => void holdCart()}>
+                Hold cart
+              </Button>
+            </div>
           ) : (
-            <Button
-              type="button"
-              size="lg"
-              disabled={
-                busy ||
-                cart.length === 0 ||
-                mode !== "sell" ||
-                (method === "cash" && cashReceived < total)
-              }
-              onClick={() => void charge()}
-            >
-              {busy ? "Charging…" : "Charge"}
+            <Button nativeButton={false} size="lg" render={<Link href={`/app/${businessKey}/pos/register`} />}>
+              Open register
             </Button>
           )}
         </CardContent>
       </Card>
-    </div>
-  )
-}
-
-function CashCounter({
-  title,
-  description,
-  currency,
-  count,
-  total,
-  onChange,
-  breakdown,
-  onCancel,
-  actionLabel,
-  actionDisabled,
-  onAction,
-}: {
-  title: string
-  description: string
-  currency: string
-  count: Record<string, number>
-  total: number
-  onChange: (value: number, raw: string) => void
-  breakdown: [string, number][] | null
-  onCancel: () => void
-  actionLabel: string
-  actionDisabled: boolean
-  onAction: () => void
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        <CardDescription>{description}</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <div className="grid gap-2 sm:grid-cols-2">
-          {DENOMS.map((value) => (
-            <div key={value} className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-              <div className="text-sm font-medium tabular-nums">{money(value, currency)}</div>
-              <Input
-                className="w-24"
-                type="number"
-                min="0"
-                step="1"
-                value={count[String(value)] || 0}
-                onChange={(event) => onChange(value, event.target.value)}
-              />
-            </div>
-          ))}
-        </div>
-        <div className="flex items-center justify-between rounded-lg border px-3 py-3">
-          <span className="text-sm text-muted-foreground">Counted total</span>
-          <span className="text-xl font-medium tabular-nums">{money(total, currency)}</span>
-        </div>
-        {breakdown ? (
-          <div className="space-y-2 rounded-lg border p-3 text-sm">
-            {breakdown.map(([label, amount]) => (
-              <div key={label} className="flex items-center justify-between gap-3">
-                <span className="text-muted-foreground">{label}</span>
-                <span className="tabular-nums">
-                  {label === "Sales" ? amount : money(amount, currency)}
-                </span>
+      <Dialog open={receipt !== null} onOpenChange={(open) => { if (!open) setReceipt(null) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Receipt {receipt?.billNumber}</DialogTitle>
+            <DialogDescription>
+              {receipt?.customer ? receipt.customer : "Walk-in"} · {receipt?.method.replaceAll("_", " ")}
+            </DialogDescription>
+          </DialogHeader>
+          {receipt ? (
+            <div className="flex flex-col gap-2 text-sm">
+              <p className="text-muted-foreground">Order {receipt.number}</p>
+              {receipt.lines.map((line) => (
+                <div key={`${line.name}-${line.price}`} className="flex justify-between gap-3">
+                  <span>
+                    {line.name} × {line.quantity}
+                  </span>
+                  <span className="tabular-nums">{money(Number(line.price) * Number(line.quantity), business.currency)}</span>
+                </div>
+              ))}
+              <div className="space-y-1 border-t pt-2">
+                <div className="flex justify-between"><span>Subtotal</span><span className="tabular-nums">{money(receipt.subtotal, business.currency)}</span></div>
+                <div className="flex justify-between"><span>Discount</span><span className="tabular-nums">{money(receipt.discount, business.currency)}</span></div>
+                <div className="flex justify-between"><span>Tax {receipt.taxRate}%</span><span className="tabular-nums">{money(receipt.tax, business.currency)}</span></div>
+                <div className="flex justify-between font-medium"><span>Total</span><span className="tabular-nums">{money(receipt.total, business.currency)}</span></div>
+                {receipt.method === "cash" ? (
+                  <>
+                    <div className="flex justify-between"><span>Tendered</span><span className="tabular-nums">{money(receipt.tendered, business.currency)}</span></div>
+                    <div className="flex justify-between"><span>Change</span><span className="tabular-nums">{money(receipt.change, business.currency)}</span></div>
+                  </>
+                ) : null}
               </div>
-            ))}
-          </div>
-        ) : null}
-        <div className="flex gap-2">
-          <Button type="button" disabled={actionDisabled} onClick={onAction}>
-            {actionLabel}
-          </Button>
-          <Button type="button" variant="ghost" onClick={onCancel}>
-            Cancel
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => window.print()}>
+              Print
+            </Button>
+            <Button type="button" onClick={() => setReceipt(null)}>
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   )
 }

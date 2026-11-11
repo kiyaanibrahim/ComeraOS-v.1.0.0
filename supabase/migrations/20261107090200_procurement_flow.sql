@@ -1,0 +1,1 @@
+-- applied from supabase/migrations/20261107141000_procurement_flow.sql

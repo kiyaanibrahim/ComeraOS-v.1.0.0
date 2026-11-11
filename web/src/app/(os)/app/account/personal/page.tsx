@@ -1,5 +1,7 @@
 "use client"
 
+import { useEffect, useState } from "react"
+
 import { DonutChart } from "@/components/analytics/charts"
 import { StatusBadge } from "@/components/analytics/status-badge"
 import { DatePicker } from "@/components/date-picker"
@@ -26,8 +28,27 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { createClient } from "@/lib/supabase/client"
 
 export default function PersonalInformationPage() {
+  const [fullName, setFullName] = useState("")
+  const [email, setEmail] = useState("")
+
+  useEffect(() => {
+    const supabase = createClient()
+    void supabase.auth.getUser().then(async ({ data }) => {
+      const user = data.user
+      if (!user) return
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("display_name, email")
+        .eq("id", user.id)
+        .maybeSingle()
+      setEmail(profile?.email || user.email || "")
+      setFullName(profile?.display_name || "")
+    })
+  }, [])
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
@@ -68,11 +89,11 @@ export default function PersonalInformationPage() {
             <div className="grid gap-5 sm:grid-cols-2">
               <Field>
                 <FieldLabel htmlFor="full-name">Full name</FieldLabel>
-                <Input id="full-name" defaultValue="Demo User" />
+                <Input id="full-name" value={fullName} onValueChange={setFullName} />
               </Field>
               <Field>
                 <FieldLabel htmlFor="email">Email</FieldLabel>
-                <Input id="email" type="email" defaultValue="demo@comera.os" />
+                <Input id="email" type="email" value={email} onValueChange={setEmail} />
               </Field>
               <Field>
                 <FieldLabel htmlFor="phone">Phone</FieldLabel>

@@ -1,8 +1,14 @@
 "use client"
 
 import Link from "next/link"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import type { ColumnDef } from "@tanstack/react-table"
 
+import { ConfirmDialog } from "@/components/data-table/confirm-dialog"
+import { DataTable } from "@/components/data-table/data-table"
+import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header"
+import type { DataTableFeatures } from "@/components/data-table/data-table-features"
+import { DataTableRowActions } from "@/components/data-table/data-table-row-actions"
 import { FlowFrame } from "@/components/flow/flow-frame"
 import { ProcurementNav } from "@/components/procurement/procurement-nav"
 import { Button } from "@/components/ui/button"
@@ -13,14 +19,9 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu"
+import { toast } from "@/components/ui/sonner"
+import { callRpc } from "@/lib/flow/rpc"
 import type { BusinessRecord, FlowClient } from "@/lib/flow/use-business"
 
 type Row = {
@@ -29,6 +30,9 @@ type Row = {
   name: string | null
   location_id: string | null
   updated_at: string
+  label: string
+  destination: string
+  updated: string
 }
 
 export function ShipmentDrafts({ businessKey }: { businessKey: string }) {
@@ -54,8 +58,8 @@ function DraftList({
   supabase: FlowClient
 }) {
   const [rows, setRows] = useState<Row[]>([])
-  const [locations, setLocations] = useState<Record<string, string>>({})
-  const [message, setMessage] = useState<string | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<Row | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const load = useCallback(async () => {
     const [shipmentRes, locationRes] = await Promise.all([
@@ -69,15 +73,79 @@ function DraftList({
       supabase.from("locations").select("id, name").eq("business_id", business.id),
     ])
     if (shipmentRes.error || locationRes.error) {
-      setMessage(shipmentRes.error?.message || locationRes.error?.message || "Could not load drafts")
+      toast.error(shipmentRes.error?.message || locationRes.error?.message || "Could not load drafts")
     }
-    setRows(shipmentRes.data ?? [])
-    setLocations(Object.fromEntries((locationRes.data ?? []).map((location) => [location.id, location.name])))
+    const locations = Object.fromEntries((locationRes.data ?? []).map((location) => [location.id, location.name]))
+    setRows(
+      (shipmentRes.data ?? []).map((row) => ({
+        ...row,
+        label: row.name || row.reference || "Draft",
+        destination: row.location_id ? locations[row.location_id] : "—",
+        updated: new Date(row.updated_at).toLocaleString(),
+      })),
+    )
   }, [business.id, supabase])
 
   useEffect(() => {
     void load()
   }, [load])
+
+  async function remove() {
+    if (!pendingDelete) return
+    setDeleting(true)
+    try {
+      await callRpc(supabase, "delete_shipment_draft", { p_shipment_id: pendingDelete.id })
+      toast.success("Draft deleted.")
+      setPendingDelete(null)
+      await load()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not delete the draft")
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const columns = useMemo<ColumnDef<DataTableFeatures, Row>[]>(
+    () => [
+      {
+        accessorKey: "label",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Shipment" />,
+        filterFn: "includesString",
+        cell: ({ row }) => (
+          <div>
+            <Link className="underline-offset-4 hover:underline" href={`/app/${businessKey}/procurement/${row.original.id}/edit`}>
+              {row.original.label}
+            </Link>
+            <div className="text-muted-foreground">{row.original.reference}</div>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "destination",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Destination" />,
+      },
+      {
+        accessorKey: "updated",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Updated" />,
+      },
+      {
+        id: "actions",
+        enableHiding: false,
+        enableSorting: false,
+        cell: ({ row }) => (
+          <DataTableRowActions
+            extra={
+              <DropdownMenuItem render={<Link href={`/app/${businessKey}/procurement/${row.original.id}/edit`} />}>
+                Edit
+              </DropdownMenuItem>
+            }
+            onDelete={() => setPendingDelete(row.original)}
+          />
+        ),
+      },
+    ],
+    [businessKey],
+  )
 
   return (
     <Card>
@@ -89,42 +157,18 @@ function DraftList({
         <Button nativeButton={false} render={<Link href={`/app/${businessKey}/procurement/new`} />}>
           New draft
         </Button>
-        {message ? <p className="text-sm text-destructive">{message}</p> : null}
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Shipment</TableHead>
-              <TableHead>Destination</TableHead>
-              <TableHead>Updated</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={3} className="h-16 text-center text-muted-foreground">
-                  No drafts yet.
-                </TableCell>
-              </TableRow>
-            ) : (
-              rows.map((row) => (
-                <TableRow key={row.id}>
-                  <TableCell>
-                    <Link
-                      className="underline-offset-4 hover:underline"
-                      href={`/app/${businessKey}/procurement/${row.id}/edit`}
-                    >
-                      {row.name || row.reference || "Draft"}
-                    </Link>
-                    <div className="text-muted-foreground">{row.reference}</div>
-                  </TableCell>
-                  <TableCell>{row.location_id ? locations[row.location_id] : "—"}</TableCell>
-                  <TableCell>{new Date(row.updated_at).toLocaleString()}</TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+        <DataTable columns={columns} data={rows} filterColumn="label" filterPlaceholder="Search drafts…" empty="No drafts yet." getRowId={(row) => row.id} />
       </CardContent>
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="Delete draft"
+        description={pendingDelete ? `Delete ${pendingDelete.label}?` : ""}
+        pending={deleting}
+        onOpenChange={(next) => {
+          if (!next) setPendingDelete(null)
+        }}
+        onConfirm={() => void remove()}
+      />
     </Card>
   )
 }

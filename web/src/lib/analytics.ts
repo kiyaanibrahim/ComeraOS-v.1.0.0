@@ -1,4 +1,4 @@
-import { businesses, formatMoney, getBusiness } from "@/lib/businesses"
+import { formatMoney, type Business } from "@/lib/businesses"
 
 const POINTS = 365
 
@@ -141,28 +141,30 @@ function dayLabels() {
   })
 }
 
-function scaleFor(businessId: string) {
+function scaleFor(businessId: string, owned: Business[]) {
   if (businessId === "platform") return 1
-  const business = getBusiness(businessId)
-  if (business.sales > 0) return business.sales / 12840
+  const business = owned.find((item) => item.id === businessId)
+  if (business && business.sales > 0) return business.sales / 12840
   return 0.45
 }
 
-function resolveTarget(metric: MetricSpec, businessId: string, scale: number) {
-  if (metric.anchor === "businesses") return businesses.length
+function resolveTarget(metric: MetricSpec, businessId: string, scale: number, owned: Business[]) {
+  if (metric.anchor === "businesses") return owned.length
   if (metric.anchor === "platformSales") {
-    return Math.max(1, businesses.reduce((sum, business) => sum + business.sales, 0))
+    return owned.reduce((sum, business) => sum + business.sales, 0)
   }
   if (metric.anchor === "platformOrders") {
-    return Math.max(1, businesses.reduce((sum, business) => sum + business.openOrders, 0))
+    return owned.reduce((sum, business) => sum + business.openOrders, 0)
   }
   if (metric.anchor === "platformStaff") {
-    return Math.max(1, businesses.reduce((sum, business) => sum + business.staff, 0))
+    return owned.reduce((sum, business) => sum + business.staff, 0)
   }
-  const business = getBusiness(businessId)
-  if (metric.anchor === "sales") return business.sales > 0 ? business.sales : Math.round(metric.base * scale)
-  if (metric.anchor === "openOrders") return business.openOrders
-  if (metric.anchor === "staff") return business.staff
+  const business = owned.find((item) => item.id === businessId)
+  if (metric.anchor === "sales") {
+    return business && business.sales > 0 ? business.sales : Math.round(metric.base * scale)
+  }
+  if (metric.anchor === "openOrders") return business?.openOrders ?? 0
+  if (metric.anchor === "staff") return business?.staff ?? 0
   return Math.max(0, Math.round(metric.base * scale))
 }
 
@@ -172,11 +174,18 @@ export function formatMetric(kind: MetricKind, value: number) {
   return new Intl.NumberFormat("en-US").format(Math.round(value))
 }
 
-function seriesFor(metric: MetricSpec, businessId: string, title: string, scale: number, prior = false) {
+function seriesFor(
+  metric: MetricSpec,
+  businessId: string,
+  title: string,
+  scale: number,
+  owned: Business[],
+  prior = false,
+) {
   const seed = `${businessId}:${title}:${metric.label}${prior ? ":prior" : ""}`
   const bias = prior ? metric.bias * -0.35 : metric.bias
   if (metric.kind === "percent") return percentSeries(seed, metric.base, bias)
-  const target = resolveTarget(metric, businessId, scale)
+  const target = resolveTarget(metric, businessId, scale, owned)
   if (target <= 0) return Array.from({ length: POINTS }, () => 0)
   const shape = walk(seed, POINTS, bias)
   const last = shape[shape.length - 1] || 1
@@ -841,7 +850,7 @@ const modules: Record<string, ModuleSpec> = {
       description: "Sales by business.",
       kind: "money",
       base: 10000,
-      items: businesses.map((business) => business.name),
+      items: [],
     },
     split: {
       title: "Billing",
@@ -866,7 +875,7 @@ const modules: Record<string, ModuleSpec> = {
       description: "Sales by business.",
       kind: "money",
       base: 10000,
-      items: businesses.map((business) => business.name),
+      items: [],
     },
     split: {
       title: "Platform",
@@ -916,7 +925,7 @@ const modules: Record<string, ModuleSpec> = {
       description: "Enabled features by business.",
       kind: "count",
       base: 12,
-      items: [...businesses.map((business) => business.name), "Shared"],
+      items: [],
     },
     split: {
       title: "Grant state",
@@ -1066,7 +1075,7 @@ const modules: Record<string, ModuleSpec> = {
       description: "Users by business.",
       kind: "count",
       base: 16,
-      items: [...businesses.map((business) => business.name), "Platform"],
+      items: [],
     },
     split: {
       title: "Account state",
@@ -1183,13 +1192,13 @@ function genericSpec(title: string): ModuleSpec {
   }
 }
 
-export function buildInsights(title: string, businessId: string): Insights {
+export function buildInsights(title: string, businessId: string, owned: Business[] = []): Insights {
   const spec = modules[title] ?? genericSpec(title)
-  const scale = scaleFor(businessId)
+  const scale = scaleFor(businessId, owned)
   const labels = dayLabels()
   const metrics = spec.metrics.map((item) => {
-    const values = seriesFor(item, businessId, title, scale)
-    const target = item.kind === "percent" ? (values[values.length - 1] ?? item.base) : resolveTarget(item, businessId, scale)
+    const values = seriesFor(item, businessId, title, scale, owned)
+    const target = item.kind === "percent" ? (values[values.length - 1] ?? item.base) : resolveTarget(item, businessId, scale, owned)
     const delta = target <= 0 && item.kind !== "percent" ? 0 : round1(deltaFrom(values))
     return {
       label: item.label,
@@ -1208,12 +1217,14 @@ export function buildInsights(title: string, businessId: string): Insights {
     spec.bars.kind === "percent"
       ? 100
       : spec.bars.kind === primary.kind
-        ? Math.max(0, Math.round(resolveTarget(primary, businessId, scale)))
+        ? Math.max(0, Math.round(resolveTarget(primary, businessId, scale, owned)))
         : Math.max(0, Math.round(spec.bars.base * scale))
   const barValues =
-    spec.bars.kind === "percent"
-      ? barWeights.map((weight) => round1(clamp(spec.bars.base * weight, 1, 99)))
-      : distribute(barTotal, barWeights)
+    spec.bars.items.length === 0
+      ? []
+      : spec.bars.kind === "percent"
+        ? barWeights.map((weight) => round1(clamp(spec.bars.base * weight, 1, 99)))
+        : distribute(barTotal, barWeights)
   const bars = spec.bars.items
     .map((label, index) => {
       const value = barValues[index] ?? 0
@@ -1239,7 +1250,7 @@ export function buildInsights(title: string, businessId: string): Insights {
         },
         {
           name: "Prior period",
-          values: seriesFor(primary, businessId, title, scale, true),
+          values: seriesFor(primary, businessId, title, scale, owned, true),
           tone: "muted",
         },
       ],
@@ -1261,14 +1272,32 @@ export function buildInsights(title: string, businessId: string): Insights {
   }
 
   if (title === "Business portfolio" || title === "Admin") {
-    insights.bars.items = [...businesses]
-      .sort((a, b) => b.sales - a.sales)
+    insights.bars.items = [...owned]
+      .sort((a, b) => b.sales - a.sales || a.name.localeCompare(b.name))
       .map((business) => ({
         label: business.name,
         value: business.sales,
         display: formatMoney(business.sales),
       }))
     insights.bars.description = "Sales by business."
+  }
+
+  if (title === "Enabled features" || title === "Users") {
+    const labels = owned.map((business) => business.name)
+    const extra = labels.length === 0 ? [] : title === "Users" ? ["Platform"] : ["Shared"]
+    const names = [...labels, ...extra]
+    if (names.length === 0) {
+      insights.bars.items = []
+    } else {
+      const weights = names.map(
+        (label) => 0.45 + unit(`${businessId}:${title}:bar:${label}`) * 0.9,
+      )
+      const values = distribute(Math.max(0, Math.round(spec.bars.base * scale)), weights)
+      insights.bars.items = names.map((label, index) => {
+        const value = values[index] ?? 0
+        return { label, value, display: formatMetric(spec.bars.kind, value) }
+      })
+    }
   }
 
   return insights

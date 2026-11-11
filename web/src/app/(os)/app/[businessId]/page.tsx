@@ -11,7 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { buildInsights } from "@/lib/analytics"
-import { getBusiness } from "@/lib/businesses"
+import { loadVisibleBusiness } from "@/lib/load-business"
 
 export default function HomePage({
   params,
@@ -25,13 +25,26 @@ export default function HomePage({
   )
 }
 
+function BusinessMissing() {
+  return (
+    <div className="flex flex-col gap-3">
+      <h1 className="font-heading text-xl font-medium tracking-tight">Business not found</h1>
+      <p className="text-sm text-muted-foreground">This business isn't available on your account.</p>
+      <Button nativeButton={false} render={<Link href="/app" />} className="w-fit">
+        Back to portfolio
+      </Button>
+    </div>
+  )
+}
+
 async function HomeContent({
   params,
 }: {
   params: Promise<{ businessId: string }>
 }) {
   const { businessId } = await params
-  const business = getBusiness(businessId)
+  const business = await loadVisibleBusiness(businessId)
+  if (!business) return <BusinessMissing />
   const base = `/app/${business.id}`
   const shortcuts = [
     { label: "Open POS", href: `${base}/pos` },

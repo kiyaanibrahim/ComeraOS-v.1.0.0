@@ -1,8 +1,21 @@
+import { Suspense } from "react"
 import Link from "next/link"
 
 import { SignupForm } from "@/components/signup-form"
 
-export default async function SignupPage({
+export default function SignupPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ plan?: string }>
+}) {
+  return (
+    <Suspense fallback={<div className="min-h-svh bg-muted" />}>
+      <SignupContent searchParams={searchParams} />
+    </Suspense>
+  )
+}
+
+async function SignupContent({
   searchParams,
 }: {
   searchParams: Promise<{ plan?: string }>

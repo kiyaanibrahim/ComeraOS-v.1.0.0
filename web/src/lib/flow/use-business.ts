@@ -16,16 +16,7 @@ export type BusinessRecord = {
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-const businessNames: Record<string, string> = {
-  demo: "Dreams Pvt Ltd",
-}
-
-const demoAccount = {
-  email: "demo@comera.os",
-  password: "comera-demo-colony",
-}
-
-export function useBusiness(key: string) {
+export function useBusiness(key: string | null) {
   const supabase = useMemo(() => createClient(), [])
   const [user, setUser] = useState<User | null>(null)
   const [business, setBusiness] = useState<BusinessRecord | null>(null)
@@ -34,27 +25,21 @@ export function useBusiness(key: string) {
 
   const reload = useCallback(async () => {
     setError(null)
-    const { data: authData, error: authError } = await supabase.auth.getUser()
-    let nextUser = authData.user
+    const { data: authData } = await supabase.auth.getUser()
+    const nextUser = authData.user
 
     if (!nextUser) {
-      const signedIn = await supabase.auth.signInWithPassword(demoAccount)
-      nextUser = signedIn.data.user
-      if (!nextUser) {
-        setUser(null)
-        setBusiness(null)
-        setError(signedIn.error?.message ?? "Couldn't open this business.")
-        setReady(true)
-        return
-      }
+      setUser(null)
+      setBusiness(null)
+      setError("Sign in to open this business.")
+      setReady(true)
+      return
     }
 
-    if (authError && nextUser) setError(null)
     setUser(nextUser)
 
-    if (!nextUser) {
+    if (!key) {
       setBusiness(null)
-      setError("Couldn't open this business.")
       setReady(true)
       return
     }
@@ -64,41 +49,14 @@ export function useBusiness(key: string) {
       ? await query.eq("id", key).maybeSingle()
       : await query.eq("slug", key).maybeSingle()
 
-    let nextBusiness = lookup.data
-    if (lookup.error) {
-      setError(lookup.error.message)
+    if (lookup.error || !lookup.data) {
+      setError(lookup.error?.message ?? "This business isn't available.")
       setBusiness(null)
       setReady(true)
       return
     }
 
-    if (!nextBusiness && !uuidPattern.test(key)) {
-      const created = await supabase.from("businesses").insert({
-        name: businessNames[key] ?? key,
-        slug: key,
-        owner_id: nextUser.id,
-      })
-      if (created.error) {
-        setError(created.error.message)
-        setBusiness(null)
-        setReady(true)
-        return
-      }
-      const again = await supabase
-        .from("businesses")
-        .select("id, name, slug, currency")
-        .eq("slug", key)
-        .maybeSingle()
-      if (again.error || !again.data) {
-        setError(again.error?.message ?? "Couldn't open this business.")
-        setBusiness(null)
-        setReady(true)
-        return
-      }
-      nextBusiness = again.data
-    }
-
-    setBusiness(nextBusiness)
+    setBusiness(lookup.data)
     setReady(true)
   }, [key, supabase])
 

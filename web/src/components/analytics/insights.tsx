@@ -72,7 +72,11 @@ export function InsightsView({
             <CardDescription>{data.bars.description}</CardDescription>
           </CardHeader>
           <CardContent>
-            <BarList items={data.bars.items} />
+            {data.bars.items.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No businesses yet.</p>
+            ) : (
+              <BarList items={data.bars.items} />
+            )}
           </CardContent>
         </Card>
       ) : null}

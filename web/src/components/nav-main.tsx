@@ -26,12 +26,13 @@ export function NavMain({
   label,
   items,
 }: {
-  label: string
+  label?: string
   items: {
     title: string
     url: string
     icon?: React.ReactNode
     isActive?: boolean
+    drill?: boolean
     items?: {
       title: string
       url: string
@@ -40,7 +41,7 @@ export function NavMain({
 }) {
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>{label}</SidebarGroupLabel>
+      {label ? <SidebarGroupLabel>{label}</SidebarGroupLabel> : null}
       <SidebarMenu>
         {items.map((item) => (
           <NavMainItem key={item.title} item={item} />
@@ -58,6 +59,7 @@ function NavMainItem({
     url: string
     icon?: React.ReactNode
     isActive?: boolean
+    drill?: boolean
     items?: {
       title: string
       url: string
@@ -74,6 +76,23 @@ function NavMainItem({
       setOpen(true)
     }
   }, [sectionActive])
+
+  if (!item.items?.length) {
+    const active = isNavActive(pathname, item.url, [item.url])
+    return (
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          tooltip={item.title}
+          isActive={active}
+          render={<Link href={item.url} />}
+        >
+          {item.icon}
+          <span>{item.title}</span>
+          {item.drill ? <ChevronRightIcon className="ml-auto" /> : null}
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    )
+  }
 
   return (
     <Collapsible

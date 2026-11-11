@@ -31,7 +31,8 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { buildInsights } from "@/lib/analytics"
-import { businesses, formatMoney, presentBusiness, type Business } from "@/lib/businesses"
+import { formatMoney, presentBusiness, type Business } from "@/lib/businesses"
+import { toast } from "@/components/ui/sonner"
 import { createClient } from "@/lib/supabase/client"
 import Link from "next/link"
 
@@ -45,16 +46,23 @@ function slugFromName(name: string) {
 }
 
 export function BusinessPortfolio() {
-  const [rows, setRows] = useState<Business[]>(businesses)
+  const [rows, setRows] = useState<Business[]>([])
   const [open, setOpen] = useState(false)
   const [name, setName] = useState("")
   const [pending, setPending] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const supabase = createClient()
     const { data, error } = await supabase.from("businesses").select("name, slug").order("name")
-    if (error || !data) return
+    if (error || !data) {
+      setRows([])
+      const text = error?.message ?? "Couldn't load businesses."
+      setLoadError(text)
+      toast.error(text)
+      return
+    }
+    setLoadError(null)
     setRows(data.map((row) => presentBusiness(row)))
   }, [])
 
@@ -67,13 +75,12 @@ export function BusinessPortfolio() {
     const trimmed = name.trim()
     if (!trimmed) return
     setPending(true)
-    setMessage(null)
     const supabase = createClient()
     const { data: auth } = await supabase.auth.getUser()
     const user = auth.user
     if (!user) {
       setPending(false)
-      setMessage("Sign in before adding a business.")
+      toast.error("Sign in before adding a business.")
       return
     }
     const slug = slugFromName(trimmed)
@@ -84,16 +91,18 @@ export function BusinessPortfolio() {
     })
     setPending(false)
     if (error) {
-      setMessage(error.message)
+      toast.error(error.message)
       return
     }
     setName("")
     setOpen(false)
+    toast.success("Business added.")
     await load()
   }
 
   return (
     <>
+      {loadError ? <p className="text-sm text-destructive">{loadError}</p> : null}
       <div className="grid gap-4 sm:grid-cols-2">
         {rows.map((business) => {
           const salesTrend = buildInsights("Home", business.id).metrics[0]
@@ -181,7 +190,6 @@ export function BusinessPortfolio() {
                 onValueChange={setName}
               />
             </div>
-            {message ? <p className="text-sm text-destructive">{message}</p> : null}
             <DialogFooter>
               <Button type="submit" disabled={pending || name.trim() === ""}>
                 {pending ? "Adding…" : "Add business"}

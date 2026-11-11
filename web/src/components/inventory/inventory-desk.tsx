@@ -1,7 +1,11 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import type { ColumnDef } from "@tanstack/react-table"
 
+import { DataTable } from "@/components/data-table/data-table"
+import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header"
+import type { DataTableFeatures } from "@/components/data-table/data-table-features"
 import { FlowFrame } from "@/components/flow/flow-frame"
 import {
   Card,
@@ -10,14 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { toast } from "@/components/ui/sonner"
 import { money, quantity } from "@/lib/flow/format"
 import type { BusinessRecord, FlowClient } from "@/lib/flow/use-business"
 
@@ -42,7 +39,7 @@ export function InventoryDesk({ businessKey }: { businessKey: string }) {
     <FlowFrame
       businessKey={businessKey}
       title="Inventory"
-      description="Stock posted when a shipment is delivered. POS sells from these balances."
+      description="Stock posted when a shipment is delivered. A store sells the in-stock products from its warehouse."
     >
       {({ business, supabase }) => <Stock business={business} supabase={supabase} />}
     </FlowFrame>
@@ -54,7 +51,6 @@ function Stock({ business, supabase }: { business: BusinessRecord; supabase: Flo
   const [movements, setMovements] = useState<Movement[]>([])
   const [names, setNames] = useState<Record<string, { sku: string; name: string; cost: number }>>({})
   const [locations, setLocations] = useState<Record<string, string>>({})
-  const [message, setMessage] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const [balanceRes, movementRes, productRes, locationRes] = await Promise.all([
@@ -72,7 +68,7 @@ function Stock({ business, supabase }: { business: BusinessRecord; supabase: Flo
       supabase.from("locations").select("id, name").eq("business_id", business.id),
     ])
     const error = balanceRes.error || movementRes.error || productRes.error || locationRes.error
-    if (error) setMessage(error.message)
+    if (error) toast.error(error.message)
     setBalances(balanceRes.data ?? [])
     setMovements(movementRes.data ?? [])
     setNames(
@@ -90,46 +86,91 @@ function Stock({ business, supabase }: { business: BusinessRecord; supabase: Flo
     void load()
   }, [load])
 
+  const balanceRows = useMemo(
+    () =>
+      balances.map((row) => ({
+        id: `${row.product_id}-${row.location_id}`,
+        product: names[row.product_id]?.name ?? "Product",
+        sku: names[row.product_id]?.sku ?? "",
+        location: locations[row.location_id] ?? "Location",
+        onHand: Number(row.quantity),
+        cost: names[row.product_id]?.cost ?? 0,
+      })),
+    [balances, locations, names],
+  )
+  const movementRows = useMemo(
+    () =>
+      movements.map((row) => ({
+        ...row,
+        product: names[row.product_id]?.name ?? "Product",
+        detail: row.reference ? `${row.reason} · ${row.reference}` : row.reason,
+        when: new Date(row.created_at).toLocaleString(),
+      })),
+    [movements, names],
+  )
+  const balanceColumns = useMemo<ColumnDef<DataTableFeatures, (typeof balanceRows)[number]>[]>(
+    () => [
+      {
+        accessorKey: "product",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Product" />,
+        filterFn: "includesString",
+        cell: ({ row }) => (
+          <div>
+            {row.original.product}
+            <div className="text-muted-foreground">{row.original.sku}</div>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "location",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Location" />,
+      },
+      {
+        accessorKey: "onHand",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="On hand" />,
+        cell: ({ row }) => quantity(row.original.onHand),
+      },
+      {
+        accessorKey: "cost",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Cost price" />,
+        cell: ({ row }) => money(row.original.cost, business.currency),
+      },
+    ],
+    [business.currency],
+  )
+  const movementColumns = useMemo<ColumnDef<DataTableFeatures, (typeof movementRows)[number]>[]>(
+    () => [
+      {
+        accessorKey: "when",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="When" />,
+      },
+      {
+        accessorKey: "product",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Product" />,
+        filterFn: "includesString",
+      },
+      {
+        accessorKey: "detail",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Reason" />,
+      },
+      {
+        accessorKey: "quantity",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Quantity" />,
+        cell: ({ row }) => quantity(Number(row.original.quantity)),
+      },
+    ],
+    [],
+  )
+
   return (
     <div className="flex flex-col gap-4">
-      {message ? <p className="text-sm text-destructive">{message}</p> : null}
       <Card>
         <CardHeader>
           <CardTitle>On hand</CardTitle>
-          <CardDescription>Active stock by location. POS uses the selling location’s balance.</CardDescription>
+          <CardDescription>On-hand quantity by location. Point of Sale shows products in stock at the store’s warehouse.</CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Product</TableHead>
-                <TableHead>Location</TableHead>
-                <TableHead>On hand</TableHead>
-                <TableHead>Cost price</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {balances.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={4} className="h-16 text-center text-muted-foreground">
-                    Deliver a shipment to post stock.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                balances.map((row) => (
-                  <TableRow key={`${row.product_id}-${row.location_id}`}>
-                    <TableCell>
-                      {names[row.product_id]?.name ?? "Product"}
-                      <div className="text-muted-foreground">{names[row.product_id]?.sku}</div>
-                    </TableCell>
-                    <TableCell>{locations[row.location_id] ?? "Location"}</TableCell>
-                    <TableCell>{quantity(Number(row.quantity))}</TableCell>
-                    <TableCell>{money(names[row.product_id]?.cost ?? 0, business.currency)}</TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+          <DataTable columns={balanceColumns} data={balanceRows} filterColumn="product" filterPlaceholder="Search products…" empty="Deliver a shipment to post stock." getRowId={(row) => row.id} />
         </CardContent>
       </Card>
       <Card>
@@ -138,37 +179,7 @@ function Stock({ business, supabase }: { business: BusinessRecord; supabase: Flo
           <CardDescription>Receipts increase stock. POS sales decrease it.</CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>When</TableHead>
-                <TableHead>Product</TableHead>
-                <TableHead>Reason</TableHead>
-                <TableHead>Quantity</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {movements.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={4} className="h-16 text-center text-muted-foreground">
-                    No movements yet.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                movements.map((row) => (
-                  <TableRow key={row.id}>
-                    <TableCell>{new Date(row.created_at).toLocaleString()}</TableCell>
-                    <TableCell>{names[row.product_id]?.name ?? "Product"}</TableCell>
-                    <TableCell>
-                      {row.reason}
-                      {row.reference ? ` · ${row.reference}` : ""}
-                    </TableCell>
-                    <TableCell>{quantity(Number(row.quantity))}</TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+          <DataTable columns={movementColumns} data={movementRows} filterColumn="product" filterPlaceholder="Search movements…" empty="No movements yet." getRowId={(row) => row.id} />
         </CardContent>
       </Card>
     </div>

@@ -27,10 +27,6 @@ export function resolveShell(pathname: string): {
   }
 
   const businessId = match[1] ?? null
-  const rest = match[2] ?? ""
-  if (rest === "/settings" || rest.startsWith("/settings/")) {
-    return { layer: "settings", businessId }
-  }
   return { layer: "home", businessId }
 }
 

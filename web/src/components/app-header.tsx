@@ -15,17 +15,22 @@ import {
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Separator } from "@/components/ui/separator"
 import { SidebarTrigger } from "@/components/ui/sidebar"
-import { matchNav, navForShell } from "@/lib/nav"
+import { isNavActive, matchModule, matchNav, navForShell } from "@/lib/nav"
 import { resolveShell } from "@/lib/shell"
 
 function HeaderBreadcrumb() {
   const pathname = usePathname()
   const shell = resolveShell(pathname)
-  const match = matchNav(pathname, navForShell(shell))
+  const module = matchModule(pathname, shell.businessId)
+  const moduleHref = module?.items.map((item) => item.href) ?? []
+  const moduleItem = module?.items
+    .filter((item) => isNavActive(pathname, item.href, moduleHref))
+    .sort((a, b) => b.href.length - a.href.length)[0]
+  const match = module ? null : matchNav(pathname, navForShell(shell))
 
-  const section = match?.section
-  const page = match?.label
-  const sectionHref = match?.sectionHref ?? "/app"
+  const section = module?.title ?? match?.section
+  const page = moduleItem?.label ?? match?.label
+  const sectionHref = module?.items[0]?.href ?? match?.sectionHref ?? "/app"
   const showPair = Boolean(section && page && section !== page)
 
   return (

@@ -1,11 +1,10 @@
-import { ModulePage } from "@/components/shell/ModulePage";
+import { redirect } from "next/navigation"
 
-export default function Page() {
-  return (
-    <ModulePage
-      section="Customers"
-      title="Locations"
-      description="Stores, warehouses, and operating sites."
-    />
-  );
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ businessId: string }>
+}) {
+  const { businessId } = await params
+  redirect(`/app/${businessId}/settings/locations`)
 }

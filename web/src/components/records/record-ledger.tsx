@@ -2,7 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { useParams } from "next/navigation"
+import type { ColumnDef } from "@tanstack/react-table"
 
+import { DataTable } from "@/components/data-table/data-table"
+import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header"
+import type { DataTableFeatures } from "@/components/data-table/data-table-features"
 import { DatePicker } from "@/components/date-picker"
 import { Input } from "@/components/ui/input"
 import {
@@ -19,14 +23,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { toast } from "@/components/ui/sonner"
 import { useBusiness, type FlowClient } from "@/lib/flow/use-business"
 
 type LedgerRow = {
@@ -120,29 +117,6 @@ async function loadLedger(title: string, supabase: FlowClient, businessId: strin
     if (error) throw new Error(error.message)
     return {
       total: count ?? data?.length ?? 0,
-      rows: shape(
-        (data ?? []).map((row) => ({
-          id: row.id,
-          reference: row.number,
-          status: row.status,
-          amount: Number(row.total),
-          when: row.created_at,
-        })),
-        currency,
-      ),
-    }
-  }
-  if (title === "Draft Orders" && business) {
-    const { data, error, count } = await supabase
-      .from("orders")
-      .select("id, number, status, total, created_at", { count: "exact" })
-      .eq("business_id", business)
-      .eq("status", "draft")
-      .order("created_at", { ascending: false })
-      .limit(100)
-    if (error) throw new Error(error.message)
-    return {
-      total: count ?? 0,
       rows: shape(
         (data ?? []).map((row) => ({
           id: row.id,
@@ -690,34 +664,43 @@ async function loadLedger(title: string, supabase: FlowClient, businessId: strin
 export function RecordLedger({ title }: { title: string }) {
   const params = useParams()
   const businessKey = typeof params.businessId === "string" ? params.businessId : null
-  const flow = useBusiness(businessKey ?? "demo")
+  const flow = useBusiness(businessKey)
   const [rows, setRows] = useState<LedgerRow[]>([])
   const [total, setTotal] = useState(0)
-  const [message, setMessage] = useState<string | null>(null)
   const [search, setSearch] = useState("")
   const [status, setStatus] = useState("all")
   const [from, setFrom] = useState<Date | undefined>()
 
   useEffect(() => {
     if (!flow.ready) return
+    if (flow.error) {
+      toast.error(flow.error)
+      setRows([])
+      setTotal(0)
+      return
+    }
     const businessId = businessKey ? flow.business?.id ?? null : null
-    if (businessKey && !businessId) return
+    if (businessKey && !businessId) {
+      toast.error("This business isn't available.")
+      setRows([])
+      setTotal(0)
+      return
+    }
     let cancelled = false
     void loadLedger(title, flow.supabase, businessId, flow.business?.currency || "USD")
       .then((result) => {
         if (cancelled) return
         setRows(result.rows)
         setTotal(result.total)
-        setMessage(null)
       })
       .catch((error: unknown) => {
         if (cancelled) return
-        setMessage(error instanceof Error ? error.message : "Could not load records")
+        toast.error(error instanceof Error ? error.message : "Could not load records")
       })
     return () => {
       cancelled = true
     }
-  }, [businessKey, flow.business?.currency, flow.business?.id, flow.ready, flow.supabase, title])
+  }, [businessKey, flow.business?.currency, flow.business?.id, flow.error, flow.ready, flow.supabase, title])
 
   const visible = useMemo(() => {
     const needle = search.trim().toLowerCase()
@@ -733,6 +716,30 @@ export function RecordLedger({ title }: { title: string }) {
   }, [from, rows, search, status])
 
   const shown = visible.length === total ? `${total} records` : `Showing ${visible.length} of ${total}`
+  const columns = useMemo<ColumnDef<DataTableFeatures, LedgerRow>[]>(
+    () => [
+      {
+        accessorKey: "reference",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Reference" />,
+        filterFn: "includesString",
+      },
+      {
+        accessorKey: "status",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Status" />,
+        cell: ({ row }) => <span className="capitalize">{showStatus(row.original.status)}</span>,
+      },
+      {
+        accessorKey: "amount",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Amount" />,
+      },
+      {
+        accessorKey: "when",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="When" />,
+        cell: ({ row }) => showDay(row.original.when),
+      },
+    ],
+    [],
+  )
 
   return (
     <Card>
@@ -769,35 +776,7 @@ export function RecordLedger({ title }: { title: string }) {
           </Select>
           <DatePicker placeholder="From date" value={from} onChange={setFrom} />
         </div>
-        {message ? <p className="text-sm text-destructive">{message}</p> : null}
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Reference</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Amount</TableHead>
-              <TableHead>When</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {visible.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
-                  No rows
-                </TableCell>
-              </TableRow>
-            ) : (
-              visible.map((row) => (
-                <TableRow key={row.id}>
-                  <TableCell>{row.reference}</TableCell>
-                  <TableCell className="capitalize">{showStatus(row.status)}</TableCell>
-                  <TableCell>{row.amount}</TableCell>
-                  <TableCell>{showDay(row.when)}</TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+        <DataTable columns={columns} data={visible} empty="No rows" getRowId={(row) => row.id} />
       </CardContent>
     </Card>
   )

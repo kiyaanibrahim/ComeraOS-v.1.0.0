@@ -9,6 +9,7 @@ import { chargesToDrafts, type ChargeDraft } from "@/components/procurement/char
 import { FieldCard, FieldGrid, FormSection } from "@/components/procurement/form-row"
 import { ProcurementNav } from "@/components/procurement/procurement-nav"
 import { catalogGaps, ProductPicker, type CatalogProduct } from "@/components/procurement/product-picker"
+import { UnsavedChangesDialog, useUnsavedChanges } from "@/components/unsaved-changes"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -18,6 +19,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { toast } from "@/components/ui/sonner"
 import {
   Select,
   SelectContent,
@@ -126,8 +128,8 @@ function Composer({
   const [cart, setCart] = useState<CartLine[]>([])
   const [charges, setCharges] = useState<ChargeDraft[]>(() => chargesToDrafts([]))
   const [dirty, setDirty] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
+  const unsaved = useUnsavedChanges(dirty)
   const weightTimers = useRef<Record<string, number>>({})
 
   const load = useCallback(async () => {
@@ -145,7 +147,7 @@ function Composer({
       supabase.from("suppliers").select("id, name").eq("business_id", business.id).order("name"),
     ])
     if (productRes.error || categoryRes.error || locationRes.error || supplierRes.error) {
-      setMessage(
+      toast.error(
         productRes.error?.message ||
           categoryRes.error?.message ||
           locationRes.error?.message ||
@@ -157,7 +159,7 @@ function Composer({
     setCategories(Object.fromEntries((categoryRes.data ?? []).map((row) => [row.id, row.name])))
     setLocations(locationRes.data ?? [])
     setSuppliers(supplierRes.data ?? [])
-    setLocationId((current) => current || locationRes.data?.[0]?.id || "")
+    setLocationId((current) => current || locationRes.data?.find((row) => row.kind === "warehouse")?.id || "")
 
     if (!shipmentId) return
     const shipmentRes = await supabase
@@ -169,7 +171,7 @@ function Composer({
       .eq("business_id", business.id)
       .maybeSingle()
     if (shipmentRes.error || !shipmentRes.data) {
-      setMessage(shipmentRes.error?.message || "This draft is not in the business.")
+      toast.error(shipmentRes.error?.message || "This draft is not in the business.")
       setClosed(true)
       return
     }
@@ -271,7 +273,7 @@ function Composer({
       .eq("id", productId)
       .eq("business_id", business.id)
     if (error) {
-      setMessage(error.message)
+      toast.error(error.message)
       return
     }
     setProducts((current) =>
@@ -310,9 +312,10 @@ function Composer({
       .select("id, name, kind")
       .single()
     if (error || !data) {
-      setMessage(error?.message ?? "Could not add the location")
+      toast.error(error?.message ?? "Could not add the location")
       return
     }
+    toast.success("Location added.")
     setLocations((current) => [...current, data].sort((a, b) => a.name.localeCompare(b.name)))
     setLocationId(data.id)
     setLocationName("")
@@ -328,9 +331,10 @@ function Composer({
       .select("id, name")
       .single()
     if (error || !data) {
-      setMessage(error?.message ?? "Could not add the supplier")
+      toast.error(error?.message ?? "Could not add the supplier")
       return
     }
+    toast.success("Supplier added.")
     setSuppliers((current) => [...current, data].sort((a, b) => a.name.localeCompare(b.name)))
     setSupplierId(data.id)
     setSupplierName("")
@@ -350,11 +354,10 @@ function Composer({
   async function save() {
     const problem = validate()
     if (problem) {
-      setMessage(problem)
+      toast.error(problem)
       return null
     }
     setPending(true)
-    setMessage(null)
     try {
       const id = await callRpc<string>(supabase, "save_shipment_draft", {
         p_business_id: business.id,
@@ -387,10 +390,11 @@ function Composer({
       })
       setDraftId(id)
       setDirty(false)
+      toast.success("Draft saved.")
       if (!shipmentId) router.replace(`/app/${businessKey}/procurement/${id}/edit`)
       return id
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not save the draft")
+      toast.error(error instanceof Error ? error.message : "Could not save the draft")
       return null
     } finally {
       setPending(false)
@@ -403,9 +407,10 @@ function Composer({
     setPending(true)
     try {
       const copy = await callRpc<string>(supabase, "duplicate_shipment", { p_shipment_id: id })
+      toast.success("Draft duplicated.")
       router.push(`/app/${businessKey}/procurement/${copy}/edit`)
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not duplicate the draft")
+      toast.error(error instanceof Error ? error.message : "Could not duplicate the draft")
       setPending(false)
     }
   }
@@ -414,15 +419,16 @@ function Composer({
     const id = await save()
     if (!id) return
     if (cart.length === 0) {
-      setMessage("Add at least one product.")
+      toast.error("Add at least one product.")
       return
     }
     setPending(true)
     try {
       await callRpc(supabase, "convert_shipment_draft", { p_shipment_id: id })
+      toast.success("Draft converted to a shipment.")
       router.push(`/app/${businessKey}/procurement/${id}`)
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not convert the draft")
+      toast.error(error instanceof Error ? error.message : "Could not convert the draft")
       setPending(false)
     }
   }
@@ -435,9 +441,10 @@ function Composer({
     setPending(true)
     try {
       await callRpc(supabase, "delete_shipment_draft", { p_shipment_id: draftId })
+      toast.success("Draft deleted.")
       router.push(`/app/${businessKey}/procurement/drafts`)
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not delete the draft")
+      toast.error(error instanceof Error ? error.message : "Could not delete the draft")
       setPending(false)
     }
   }
@@ -458,11 +465,13 @@ function Composer({
     )
   }
 
-  const locationItems = Object.fromEntries(locations.map((location) => [location.id, location.name]))
+  const destinations = locations.filter((location) => location.kind === "warehouse" || location.id === locationId)
+  const locationItems = Object.fromEntries(destinations.map((location) => [location.id, location.name]))
   const supplierItems = Object.fromEntries(suppliers.map((supplier) => [supplier.id, supplier.name]))
 
   return (
     <div className="flex flex-col gap-4">
+      <UnsavedChangesDialog open={unsaved.open} onStay={unsaved.stay} onLeave={unsaved.leave} />
       <ProductPicker
         open={pickerOpen}
         onOpenChange={setPickerOpen}
@@ -493,13 +502,13 @@ function Composer({
               <Input value={originCountry} onValueChange={(value) => mark(setOriginCountry)(value)} />
             </FieldCard>
             <FieldCard label="Destination warehouse">
-              {locations.length > 0 ? (
+              {destinations.length > 0 ? (
                 <Select value={locationId} items={locationItems} onValueChange={(value) => mark(setLocationId)(value ?? "")}>
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Location" />
+                    <SelectValue placeholder="Warehouse" />
                   </SelectTrigger>
                   <SelectContent>
-                    {locations.map((location) => (
+                    {destinations.map((location) => (
                       <SelectItem key={location.id} value={location.id}>
                         {location.name}
                       </SelectItem>
@@ -836,7 +845,6 @@ function Composer({
             <span>Total shipment cost</span>
             <span className="tabular-nums">{money(landed.landingTotal, business.currency)}</span>
           </div>
-          {message ? <p className="text-destructive">{message}</p> : null}
           <div className="flex flex-wrap gap-2">
             <Button type="button" onClick={() => void save()} disabled={pending}>
               {pending ? "Saving…" : "Save draft"}

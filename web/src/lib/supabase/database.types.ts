@@ -224,6 +224,7 @@ export type Database = {
           order_id: string | null
           status: string
           subtotal: number
+          discount: number
           tax: number
           total: number
           updated_at: string
@@ -238,6 +239,7 @@ export type Database = {
           order_id?: string | null
           status?: string
           subtotal?: number
+          discount?: number
           tax?: number
           total?: number
           updated_at?: string
@@ -252,6 +254,7 @@ export type Database = {
           order_id?: string | null
           status?: string
           subtotal?: number
+          discount?: number
           tax?: number
           total?: number
           updated_at?: string
@@ -372,6 +375,7 @@ export type Database = {
           legal_name: string | null
           order_prefix: string
           tax_id: string | null
+          tax_rate: number
           updated_at: string
         }
         Insert: {
@@ -381,6 +385,7 @@ export type Database = {
           legal_name?: string | null
           order_prefix?: string
           tax_id?: string | null
+          tax_rate?: number
           updated_at?: string
         }
         Update: {
@@ -390,6 +395,7 @@ export type Database = {
           legal_name?: string | null
           order_prefix?: string
           tax_id?: string | null
+          tax_rate?: number
           updated_at?: string
         }
         Relationships: [
@@ -664,8 +670,10 @@ export type Database = {
       }
       customers: {
         Row: {
+          address: string | null
           business_id: string
           created_at: string
+          customer_type: string
           email: string | null
           id: string
           name: string
@@ -675,8 +683,10 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          address?: string | null
           business_id: string
           created_at?: string
+          customer_type?: string
           email?: string | null
           id?: string
           name: string
@@ -686,8 +696,10 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          address?: string | null
           business_id?: string
           created_at?: string
+          customer_type?: string
           email?: string | null
           id?: string
           name?: string
@@ -1079,6 +1091,7 @@ export type Database = {
           address: Json
           business_id: string
           created_at: string
+          fulfillment_warehouse_id: string | null
           id: string
           is_active: boolean
           kind: string
@@ -1089,6 +1102,7 @@ export type Database = {
           address?: Json
           business_id: string
           created_at?: string
+          fulfillment_warehouse_id?: string | null
           id?: string
           is_active?: boolean
           kind?: string
@@ -1099,6 +1113,7 @@ export type Database = {
           address?: Json
           business_id?: string
           created_at?: string
+          fulfillment_warehouse_id?: string | null
           id?: string
           is_active?: boolean
           kind?: string
@@ -1112,6 +1127,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "businesses"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "locations_fulfillment_warehouse_id_business_id_fkey"
+            columns: ["fulfillment_warehouse_id", "business_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id", "business_id"]
           },
         ]
       }
@@ -1178,6 +1200,8 @@ export type Database = {
           source: string
           status: string
           subtotal: number
+          quotation_id: string | null
+          discount: number
           tax: number
           total: number
           updated_at: string
@@ -1196,6 +1220,8 @@ export type Database = {
           source?: string
           status?: string
           subtotal?: number
+          quotation_id?: string | null
+          discount?: number
           tax?: number
           total?: number
           updated_at?: string
@@ -1214,6 +1240,8 @@ export type Database = {
           source?: string
           status?: string
           subtotal?: number
+          quotation_id?: string | null
+          discount?: number
           tax?: number
           total?: number
           updated_at?: string
@@ -1238,6 +1266,13 @@ export type Database = {
             columns: ["location_id", "business_id"]
             isOneToOne: false
             referencedRelation: "locations"
+            referencedColumns: ["id", "business_id"]
+          },
+          {
+            foreignKeyName: "orders_quotation_id_business_id_fkey"
+            columns: ["quotation_id", "business_id"]
+            isOneToOne: false
+            referencedRelation: "quotations"
             referencedColumns: ["id", "business_id"]
           },
           {
@@ -2495,6 +2530,13 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      accept_quotation: {
+        Args: {
+          p_business_id: string
+          p_quotation_id: string
+        }
+        Returns: Json
+      }
       close_register_session: {
         Args: {
           p_business_id: string
@@ -2507,11 +2549,46 @@ export type Database = {
       complete_pos_sale: {
         Args: {
           p_business_id: string
+          p_customer_id?: string
+          p_discount?: number
           p_lines: Json
           p_method: string
           p_notes?: string
           p_register_id: string
           p_tendered?: number
+        }
+        Returns: Json
+      }
+      hold_pos_cart: {
+        Args: {
+          p_business_id: string
+          p_customer_id?: string
+          p_discount?: number
+          p_lines: Json
+          p_notes?: string
+          p_register_id: string
+        }
+        Returns: Json
+      }
+      return_pos_sale: {
+        Args: {
+          p_bill_id: string
+          p_business_id: string
+          p_lines: Json
+        }
+        Returns: Json
+      }
+      take_pos_hold: {
+        Args: {
+          p_business_id: string
+          p_register_id: string
+        }
+        Returns: Json
+      }
+      void_pos_sale: {
+        Args: {
+          p_business_id: string
+          p_order_id: string
         }
         Returns: Json
       }
