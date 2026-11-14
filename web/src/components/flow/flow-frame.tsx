@@ -6,7 +6,7 @@ import { type BusinessRecord, type FlowClient, useBusiness } from "@/lib/flow/us
 
 const steps = [
   ["Products", "products"],
-  ["Inbound shipments", "procurement"],
+  ["Procurement", "procurement"],
   ["Inventory", "inventory"],
   ["POS", "pos"],
 ] as const

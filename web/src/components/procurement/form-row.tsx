@@ -31,17 +31,19 @@ export function ValueCard({
   label,
   value,
   badge,
+  quiet,
 }: {
   label: string
   value: React.ReactNode
   badge?: React.ReactNode
+  quiet?: boolean
 }) {
   return (
     <div className="flex items-center justify-between gap-4 rounded-xl border px-4 py-3">
       <div className="text-sm text-muted-foreground">{label}</div>
       <div className="flex items-center gap-2">
         {badge}
-        <div className="text-sm font-medium">{value}</div>
+        <div className={quiet ? "text-sm text-muted-foreground" : "text-sm font-medium"}>{value}</div>
       </div>
     </div>
   )

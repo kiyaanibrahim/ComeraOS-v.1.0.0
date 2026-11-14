@@ -10,7 +10,6 @@ import { DataTableColumnHeader } from "@/components/data-table/data-table-column
 import type { DataTableFeatures } from "@/components/data-table/data-table-features"
 import { DataTableRowActions } from "@/components/data-table/data-table-row-actions"
 import { FlowFrame } from "@/components/flow/flow-frame"
-import { ProcurementNav } from "@/components/procurement/procurement-nav"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -39,9 +38,8 @@ export function ShipmentDrafts({ businessKey }: { businessKey: string }) {
   return (
     <FlowFrame
       businessKey={businessKey}
-      title="Draft shipments"
-      description="Purchase plans that have not been converted into an active shipment."
-      aside={<ProcurementNav businessKey={businessKey} current="drafts" />}
+      title="Draft Orders"
+      description="Draft orders that have not been converted into a shipment."
     >
       {({ business, supabase }) => <DraftList business={business} businessKey={businessKey} supabase={supabase} />}
     </FlowFrame>
@@ -150,18 +148,18 @@ function DraftList({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Drafts</CardTitle>
-        <CardDescription>Open a draft to change quantities or convert it.</CardDescription>
+        <CardTitle>Draft Orders</CardTitle>
+        <CardDescription>Open a draft order to change quantities or convert it into a shipment.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <Button nativeButton={false} render={<Link href={`/app/${businessKey}/procurement/new`} />}>
-          New draft
+          New draft order
         </Button>
         <DataTable columns={columns} data={rows} filterColumn="label" filterPlaceholder="Search drafts…" empty="No drafts yet." getRowId={(row) => row.id} />
       </CardContent>
       <ConfirmDialog
         open={pendingDelete !== null}
-        title="Delete draft"
+        title="Delete draft order"
         description={pendingDelete ? `Delete ${pendingDelete.label}?` : ""}
         pending={deleting}
         onOpenChange={(next) => {

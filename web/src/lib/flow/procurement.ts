@@ -1,13 +1,22 @@
 export const shipmentStages = [
   ["draft_order", "Draft order", "Order being prepared"],
-  ["order_placed", "Order placed", "Supplier has confirmed the order"],
-  ["at_forwarder", "Received at forwarder", "Products reached the forwarding company"],
-  ["handed_to_freight", "Handed to freight", "Shipment handed over for transportation"],
-  ["arrived", "Arrived", "Shipment has arrived in the destination country"],
-  ["customs", "Under customs", "Customs clearance is underway"],
-  ["cleared", "Cleared", "Clearance has been completed"],
-  ["received", "Received at warehouse", "Goods physically received"],
-  ["stock_added", "Stock added", "Inventory intake has been applied"],
+  ["order_placed", "Supplier", "Supplier planning to dispatch"],
+  ["at_forwarder", "Forwarder", "Forwarder warehouse handling"],
+  ["handed_to_freight", "Freight", "Air cargo movement"],
+  ["arrived", "Arrived (Male)", "Shipment arrived in Male"],
+  ["customs", "Customs", "Customs and clearing"],
+  ["cleared", "Cleared", "Clearance completed"],
+  ["received", "Final Delivery", "JUICIFY intake"],
+  ["stock_added", "Inventory", "Stock added to inventory"],
+] as const
+
+export const lifecycleMilestones = [
+  ["Supplier", "order_placed"],
+  ["Forwarder", "at_forwarder"],
+  ["Freight", "arrived"],
+  ["Customs", "cleared"],
+  ["Final Delivery", "received"],
+  ["Inventory", "stock_added"],
 ] as const
 
 export type ShipmentStage = (typeof shipmentStages)[number][0]

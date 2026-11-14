@@ -7,7 +7,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { FlowFrame } from "@/components/flow/flow-frame"
 import { chargesToDrafts, type ChargeDraft } from "@/components/procurement/charge-drafts"
 import { FieldCard, FieldGrid, FormSection, ValueCard } from "@/components/procurement/form-row"
-import { ProcurementNav } from "@/components/procurement/procurement-nav"
 import { UnsavedChangesDialog, useUnsavedChanges } from "@/components/unsaved-changes"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -33,15 +32,23 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import {
+  Timeline,
+  TimelineContent,
+  TimelineHeader,
+  TimelineIndicator,
+  TimelineItem,
+  TimelineSeparator,
+  TimelineTitle,
+} from "@/components/reui/timeline"
 import { autoBatchReference } from "@/lib/flow/codes"
 import { margin, suggestedPackages } from "@/lib/flow/cost"
 import { money, quantity, statusLabel } from "@/lib/flow/format"
 import {
   chargeGroups,
   groupLabel,
+  lifecycleMilestones,
   nextStage,
-  shipmentStages,
-  stageDetail,
   stageIndex,
   stageLabel,
 } from "@/lib/flow/procurement"
@@ -108,7 +115,7 @@ const phases = [
     ],
   },
   {
-    title: "Forwarder Phase",
+    title: "Forwarder Phase (Dubai)",
     note: "Forwarder warehouse handling",
     duration: "Warehouse Hold Duration",
     from: "at_forwarder",
@@ -126,7 +133,7 @@ const phases = [
     to: "arrived",
     rows: [
       { label: "Date Departed", stage: "handed_to_freight" },
-      { label: "Date Arrived", stage: "arrived" },
+      { label: "Date Arrived (Male)", stage: "arrived" },
     ],
   },
   {
@@ -142,12 +149,12 @@ const phases = [
   },
   {
     title: "Final Delivery",
-    note: "Warehouse intake",
+    note: "JUICIFY intake",
     duration: "Total End-to-End Duration",
     from: "order_placed",
     to: "stock_added",
     rows: [
-      { label: "Date Received", stage: "received" },
+      { label: "Date Received by JUICIFY", stage: "received" },
       { label: "Date Stock Added to Inventory", stage: "stock_added" },
     ],
   },
@@ -164,17 +171,22 @@ function chargeLabel(description: string) {
   return labels[description] ?? description
 }
 
-function moneyStatus(amount: string, assumed: string) {
-  if (amount.trim() === "" || Number.isNaN(Number(amount))) return assumed.trim() ? "Pending" : "Missing"
-  if (assumed.trim() !== "" && Number(amount) === Number(assumed)) return "Projected"
-  return "Actual"
+function figureStatus(source: string) {
+  return source === "actual" ? "Actual" : "Projected"
 }
 
-function rateStatus(value: string, assumed: string) {
-  if (value.trim() === "" || Number.isNaN(Number(value))) return "Pending"
-  if (assumed.trim() !== "" && Number(value) === Number(assumed)) return "Baseline"
-  if (Number(value) === 0) return "Pending"
-  return "Actual"
+function roundMoney(value: number) {
+  return Math.round(value * 100) / 100
+}
+
+function projectionHint(assumed: string, currency: string, count: number, status: string) {
+  if (status === "Actual") return "Source: Entered on this shipment"
+  const amount = money(Number(assumed) || 0, currency)
+  if (count > 0) {
+    const sample = count === 1 ? "the last shipment" : `the last ${count} shipments`
+    return `Source: Projected from ${sample} (${amount})`
+  }
+  return `Source: Projected default (${amount})`
 }
 
 function packageStatus(value: string) {
@@ -183,7 +195,12 @@ function packageStatus(value: string) {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  return <Badge variant={status === "Actual" ? "positive" : "secondary"}>{status}</Badge>
+  if (status === "Actual") return <Badge variant="positive">{status}</Badge>
+  return (
+    <Badge variant="outline" className="text-muted-foreground">
+      {status}
+    </Badge>
+  )
 }
 
 export function ShipmentDetail({
@@ -197,8 +214,7 @@ export function ShipmentDetail({
     <FlowFrame
       businessKey={businessKey}
       title="Procurement"
-      description="Procurement now runs as a governed shipment and draft domain linked to SKU truth. Inventory intake is applied only at the final received state, with status progression enforced in sequence."
-      aside={<ProcurementNav businessKey={businessKey} current="tracker" />}
+      description="A shipment moves from the supplier through the forwarder, freight, customs, and final delivery before stock is added to inventory."
     >
       {({ business, supabase }) => (
         <Detail business={business} businessKey={businessKey} shipmentId={shipmentId} supabase={supabase} />
@@ -229,10 +245,12 @@ function Detail({
   const [packageCount, setPackageCount] = useState("")
   const [chargeable, setChargeable] = useState("")
   const [freightRate, setFreightRate] = useState("")
+  const [freightSource, setFreightSource] = useState<"projected" | "actual">("projected")
   const [assumedFreight, setAssumedFreight] = useState("")
+  const [projectionCount, setProjectionCount] = useState(0)
   const [draftCharges, setDraftCharges] = useState<ChargeDraft[]>(() => chargesToDrafts([]))
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const [timelineOpen, setTimelineOpen] = useState(false)
+  const [lifecycleOpen, setLifecycleOpen] = useState(false)
   const [compositionOpen, setCompositionOpen] = useState(true)
   const [pending, setPending] = useState(false)
   const savedSnapshot = useRef("")
@@ -291,7 +309,7 @@ function Detail({
       .eq("direction", "inbound")
       .neq("id", shipmentId)
       .order("created_at", { ascending: false })
-      .limit(8)
+      .limit(5)
     const previousRows = previousRes.data ?? []
     const previousCharges = previousRows.length
       ? (
@@ -304,30 +322,38 @@ function Detail({
             )
         ).data ?? []
       : []
-    const previous = previousRows.find((item) =>
-      previousCharges.some((charge) => charge.shipment_id === item.id) || Number(item.freight_per_kg) > 0,
-    )
-    const assumedRows = previous
-      ? previousCharges.filter((charge) => charge.shipment_id === previous.id)
-      : []
-    const assumedRate = previous && Number(previous.freight_per_kg) > 0 ? String(previous.freight_per_kg) : ""
+    const buckets = new Map<string, number[]>()
+    for (const previous of previousRows) {
+      const rows = previousCharges.filter((charge) => charge.shipment_id === previous.id)
+      for (const line of chargesToDrafts(rows)) {
+        if (line.amount.trim() === "" || Number.isNaN(Number(line.amount))) continue
+        const values = buckets.get(line.key) ?? []
+        values.push(Number(line.amount))
+        buckets.set(line.key, values)
+      }
+    }
+    const projected = new Map<string, string>()
+    for (const [key, values] of buckets) {
+      projected.set(key, String(roundMoney(values.reduce((sum, value) => sum + value, 0) / values.length)))
+    }
+    const rateSamples = previousRows.map((item) => Number(item.freight_per_kg)).filter((value) => value > 0)
+    const assumedRate = rateSamples.length
+      ? String(roundMoney(rateSamples.reduce((sum, value) => sum + value, 0) / rateSamples.length))
+      : "0"
+    setProjectionCount(previousRows.length)
     const ownCharges = chargeRes.data ?? []
-    const projected = chargesToDrafts(assumedRows)
     const drafts = chargesToDrafts(ownCharges).map((line) => {
-      const assumed = projected.find((item) => item.key === line.key)?.amount ?? ""
+      const assumed = projected.get(line.key) ?? "0"
       const savedActual = line.source === "actual" && line.amount.trim() !== ""
-      if (savedActual) return { ...line, assumed }
-      if (assumed) return { ...line, amount: assumed, assumed, source: "projected" }
-      return { ...line, assumed }
+      if (savedActual) return { ...line, assumed, source: "actual" }
+      return { ...line, amount: assumed, assumed, source: "projected" }
     })
     const nextPackages = row.package_count_actual === null ? "" : String(row.package_count_actual)
     const nextChargeable = row.chargeable_weight_kg === null ? "" : String(row.chargeable_weight_kg)
-    const nextFreight =
-      assumedRate && (Number(row.freight_per_kg) === 0 || Number(row.freight_per_kg) === Number(assumedRate))
-        ? assumedRate
-        : Number(row.freight_per_kg) > 0
-          ? String(row.freight_per_kg)
-          : assumedRate || "0"
+    const savedRate = Number(row.freight_per_kg)
+    const rateIsProjected = savedRate === 0 || savedRate === Number(assumedRate)
+    const nextFreight = rateIsProjected ? assumedRate : String(savedRate)
+    const nextFreightSource = rateIsProjected ? "projected" : "actual"
     const nextBatches = Object.fromEntries(
       (lineRes.data ?? []).map((line) => [line.id, line.batch_reference?.trim() || autoBatchReference(line.id)]),
     )
@@ -335,6 +361,7 @@ function Detail({
     setChargeable(nextChargeable)
     setAssumedFreight(assumedRate)
     setFreightRate(nextFreight)
+    setFreightSource(nextFreightSource)
     setDraftCharges(drafts)
     setBatchRefs(nextBatches)
     savedSnapshot.current = JSON.stringify({
@@ -383,10 +410,10 @@ function Detail({
     const missing: string[] = []
     if (packageStatus(packageCount) !== "Actual") missing.push("package count")
     const shippingActual = draftCharges.some(
-      (charge) => charge.group === "shipping_company" && moneyStatus(charge.amount, charge.assumed) === "Actual",
+      (charge) => charge.group === "shipping_company" && charge.source === "actual",
     )
     const clearanceActual = draftCharges.some(
-      (charge) => charge.group === "clearance" && moneyStatus(charge.amount, charge.assumed) === "Actual",
+      (charge) => charge.group === "clearance" && charge.source === "actual",
     )
     if (!shippingActual) missing.push("shipping company charges")
     if (!clearanceActual) missing.push("clearance actuals")
@@ -431,7 +458,7 @@ function Detail({
           kind: charge.kind,
           amount: Number(charge.amount) || 0,
           cost_group: charge.group,
-          source: moneyStatus(charge.amount, charge.assumed) === "Actual" ? "actual" : "projected",
+          source: charge.source === "actual" ? "actual" : "projected",
           recoverable: charge.recoverable,
           description: charge.description,
         })),
@@ -442,7 +469,6 @@ function Detail({
     return <p className="text-sm text-muted-foreground">This shipment is not in the business.</p>
   }
 
-  const progress = (stageIndex(shipment.stage) / (shipmentStages.length - 1)) * 100
   const upcoming = nextStage(shipment.stage)
   const recorded = new Map<string, string>()
   for (const event of events) {
@@ -467,26 +493,34 @@ function Detail({
     recorded.has("stock_added"),
   ]
   const dated = checkpoints.filter(Boolean).length
-  const freightBadge =
-    draftCharges.some((charge) => charge.group === "freight" && moneyStatus(charge.amount, charge.assumed) === "Actual") ||
-    rateStatus(freightRate, assumedFreight) === "Actual"
-      ? "Actual"
-      : rateStatus(freightRate, assumedFreight) === "Baseline" ||
-          draftCharges.some((charge) => charge.group === "freight" && moneyStatus(charge.amount, charge.assumed) === "Projected")
-        ? "Baseline"
-        : "Pending"
+  const currentStageIndex = stageIndex(shipment.stage)
+  let checkpoint = "Complete"
+  for (const phase of phases) {
+    const waiting = phase.rows.find((row) => row.stage && !recorded.has(row.stage))
+    if (waiting) {
+      checkpoint = waiting.label
+      break
+    }
+  }
+  let completedMilestones = 0
+  for (const [, stage] of lifecycleMilestones) {
+    const done = recorded.has(stage) || currentStageIndex > stageIndex(stage)
+    if (!done) break
+    completedMilestones += 1
+  }
   const groupBadge = (group: string) => {
-    if (group === "freight") return freightBadge
+    if (group === "freight" && freightSource === "actual") return "Actual"
     const rows = draftCharges.filter((charge) => charge.group === group)
-    if (rows.some((charge) => moneyStatus(charge.amount, charge.assumed) === "Actual")) return "Actual"
-    if (rows.some((charge) => moneyStatus(charge.amount, charge.assumed) === "Projected")) return "Projected"
-    return "Missing"
+    if (rows.some((charge) => charge.source === "actual")) return "Actual"
+    return "Projected"
   }
   const entered = (group: string) =>
     draftCharges
       .filter((charge) => charge.group === group && charge.amount.trim() !== "" && !charge.recoverable)
       .reduce((sum, charge) => sum + (Number(charge.amount) || 0), 0)
-  const previewLanding = (entered("freight") || calculatedFreight) + entered("shipping_company") + entered("clearance")
+  const freightFromCharge = draftCharges.some((charge) => charge.group === "freight" && charge.source === "actual")
+  const freightFigure = freightFromCharge ? entered("freight") : calculatedFreight
+  const previewLanding = freightFigure + entered("shipping_company") + entered("clearance")
 
   return (
     <div className="flex flex-col gap-4">
@@ -524,7 +558,7 @@ function Detail({
           <div className="flex flex-wrap gap-2">
             {draft ? (
               <Button nativeButton={false} render={<Link href={`/app/${businessKey}/procurement/${shipment.id}/edit`} />}>
-                Edit draft
+                Edit draft order
               </Button>
             ) : null}
             {open && !draft && upcoming !== "stock_added" ? (
@@ -543,7 +577,6 @@ function Detail({
                 }
               >
                 Advance to {stageLabel(upcoming)}
-                {upcoming === "order_placed" ? " (Supplier Confirmed)" : ""}
               </Button>
             ) : null}
             {shipment.status === "pending" && !draft ? (
@@ -601,120 +634,94 @@ function Detail({
         </CardContent>
       </Card>
 
+      <Collapsible open={lifecycleOpen} onOpenChange={setLifecycleOpen}>
       <Card>
         <CardHeader>
-          <CardTitle>Shipment Lifecycle</CardTitle>
-          <CardDescription>
-            {dated} / 10
-            {shipment.stage === "stock_added"
-              ? " · Inventory has been applied."
-              : shipment.stage === "received"
-                ? " · Confirm actuals and apply inventory."
-                : ` · ${stageDetail(upcoming)}`}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          <div className="h-2 overflow-hidden rounded-full bg-muted">
-            <div className="h-full bg-primary" style={{ width: `${progress}%` }} />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {(
-              [
-                ["Supplier", "order_placed"],
-                ["Forwarder", "at_forwarder"],
-                ["Freight", "arrived"],
-                ["Customs", "cleared"],
-                ["Final Delivery", "received"],
-                ["Inventory", "stock_added"],
-              ] as const
-            ).map(([label, stage]) => (
-              <Badge key={stage} variant={recorded.has(stage) ? "positive" : "outline"}>
-                {label} · {recorded.has(stage) ? "Done" : "Pending"}
-              </Badge>
-            ))}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {shipmentStages.map(([key, label]) => (
-              <Button
-                key={key}
-                type="button"
-                size="sm"
-                variant={key === shipment.stage ? "default" : "outline"}
-                disabled={pending || draft || locked || key === "draft_order" || key === "stock_added" || key === shipment.stage}
-                onClick={() =>
-                  void run(() =>
-                    callRpc(supabase, "set_shipment_stage", {
-                      p_shipment_id: shipment.id,
-                      p_stage: key,
-                      p_note: label,
-                    }),
-                  )
-                }
-              >
-                {label}
-              </Button>
-            ))}
-          </div>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            {phases.map((phase) => (
-              <FormSection key={phase.title} title={phase.title}>
-                <div className="py-3">
-                  <p className="mb-2 text-xs text-muted-foreground">{phase.note}</p>
-                  <FieldGrid>
-                    {phase.rows.map((row) => (
-                      <ValueCard
-                        key={row.label}
-                        label={row.label}
-                        value={
-                          row.stage && recorded.has(row.stage)
-                            ? new Date(recorded.get(row.stage)!).toLocaleString()
-                            : "Pending"
-                        }
-                      />
-                    ))}
-                    <ValueCard
-                      label={phase.duration}
-                      value={spanLabel(recorded.get(phase.from), recorded.get(phase.to))}
-                    />
-                  </FieldGrid>
-                </div>
-              </FormSection>
-            ))}
-          </div>
-          <Collapsible open={timelineOpen} onOpenChange={setTimelineOpen}>
-            <CollapsibleTrigger className="text-sm underline-offset-4 hover:underline">
-              {timelineOpen ? "Hide timeline" : "Show timeline"}
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex flex-col gap-1">
+              <p className="text-xs font-medium tracking-[0.14em] text-muted-foreground">Shipment progress</p>
+              <CardTitle>Shipment Lifecycle</CardTitle>
+              <CardDescription>
+                {dated} / 10 · {checkpoint}
+              </CardDescription>
+            </div>
+            <CollapsibleTrigger className="inline-flex shrink-0 items-center rounded-md border px-3 py-1.5 text-xs font-medium">
+              {lifecycleOpen ? "Collapse" : "Expand"}
             </CollapsibleTrigger>
-            <CollapsibleContent className="mt-3 flex flex-col gap-3">
-              {events.map((event) => (
-                <div key={event.id} className="flex items-start justify-between gap-3 text-sm">
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          {lifecycleOpen ? null : (
+            <Timeline orientation="horizontal" value={completedMilestones} className="w-full">
+              {lifecycleMilestones.map(([label, stage], index) => {
+                const when = recorded.get(stage)
+                return (
+                  <TimelineItem key={stage} step={index + 1}>
+                    <TimelineHeader>
+                      <TimelineTitle>{label}</TimelineTitle>
+                    </TimelineHeader>
+                    <TimelineIndicator />
+                    <TimelineSeparator />
+                    <TimelineContent>{when ? new Date(when).toLocaleDateString() : "Pending"}</TimelineContent>
+                  </TimelineItem>
+                )
+              })}
+            </Timeline>
+          )}
+          <CollapsibleContent className="flex flex-col">
+            {phases.map((phase) => (
+              <section key={phase.title} className="border-t py-4">
+                <div className="mb-4 flex items-start justify-between gap-3">
                   <div>
-                    <div className="font-medium">
-                      {event.stage ? stageLabel(event.stage) : statusLabel(event.status)}
-                    </div>
-                    {event.note ? <div className="text-muted-foreground">{event.note}</div> : null}
+                    <p className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">{phase.title}</p>
+                    <p className="font-medium">{phase.note}</p>
                   </div>
-                  <time className="text-muted-foreground">{new Date(event.occurred_at).toLocaleString()}</time>
+                  <Badge variant={recorded.has(phase.to) ? "positive" : "outline"}>
+                    {recorded.has(phase.to) ? "Done" : "Pending"}
+                  </Badge>
                 </div>
-              ))}
-            </CollapsibleContent>
-          </Collapsible>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {phase.rows.map((row) => (
+                    <div key={row.label}>
+                      <p className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">{row.label}</p>
+                      <p className="text-sm">
+                        {row.stage && recorded.has(row.stage)
+                          ? new Date(recorded.get(row.stage)!).toLocaleString()
+                          : "Pending"}
+                      </p>
+                    </div>
+                  ))}
+                  <div>
+                    <p className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">{phase.duration}</p>
+                    <p className="text-sm">{spanLabel(recorded.get(phase.from), recorded.get(phase.to))}</p>
+                  </div>
+                </div>
+              </section>
+            ))}
+          </CollapsibleContent>
         </CardContent>
       </Card>
+      </Collapsible>
 
+      <Collapsible open={compositionOpen} onOpenChange={setCompositionOpen}>
       <Card>
         <CardHeader>
-          <CardTitle>Shipment Lines</CardTitle>
-          <CardDescription>
-            {quantity(units)} units · {lines.length} SKUs · {quantity(weightGrams / 1000)} kg
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Collapsible open={compositionOpen} onOpenChange={setCompositionOpen}>
-            <CollapsibleTrigger className="text-sm underline-offset-4 hover:underline">
-              {compositionOpen ? "Hide lines" : "Show lines"}
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-col gap-1">
+              <p className="text-xs font-medium tracking-[0.14em] text-muted-foreground">Shipment composition</p>
+              <CardTitle>Shipment Lines</CardTitle>
+              <CardDescription>
+                {quantity(units)} units · {lines.length} SKUs · {quantity(weightGrams / 1000)} kg
+              </CardDescription>
+            </div>
+            <CollapsibleTrigger className="inline-flex shrink-0 items-center rounded-md border px-3 py-1.5 text-xs font-medium">
+              {compositionOpen ? "Collapse" : "Expand"}
             </CollapsibleTrigger>
-            <CollapsibleContent className="mt-3 overflow-x-auto">
+          </div>
+        </CardHeader>
+        <CollapsibleContent>
+        <CardContent>
+            <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-left text-muted-foreground">
                   <tr>
@@ -761,10 +768,11 @@ function Detail({
                   ))}
                 </tbody>
               </table>
-            </CollapsibleContent>
-          </Collapsible>
+            </div>
         </CardContent>
+        </CollapsibleContent>
       </Card>
+      </Collapsible>
 
       <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
         <div className="flex flex-col gap-4">
@@ -783,13 +791,13 @@ function Detail({
         </CardContent>
       </Card>
 
-      {draft ? null : (
+      {(
         <Card>
           <CardHeader>
             <CardTitle>Actual Financial Truth Inputs</CardTitle>
             <CardDescription>
-              These values become batch cost truth when inventory is applied. Amounts start as the previous order&apos;s
-              projected value. Change a number and its badge turns Actual.
+              Every figure starts as a projection from the last 5 shipments. Type a number and that figure, plus its
+              summary line, turns Actual.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
@@ -808,15 +816,9 @@ function Detail({
                           />
                           <FieldCard
                             label="USD per kg"
-                            badge={<StatusBadge status={rateStatus(freightRate, assumedFreight)} />}
-                            quiet={rateStatus(freightRate, assumedFreight) !== "Actual"}
-                            hint={
-                              rateStatus(freightRate, assumedFreight) === "Actual"
-                                ? "Entered on this shipment"
-                                : assumedFreight
-                                  ? `Previous order baseline (USD ${assumedFreight})`
-                                  : "No previous rate"
-                            }
+                            badge={<StatusBadge status={figureStatus(freightSource)} />}
+                            quiet={freightSource !== "actual"}
+                            hint={projectionHint(assumedFreight, "USD", projectionCount, figureStatus(freightSource))}
                           >
                             <Input
                               type="number"
@@ -824,7 +826,10 @@ function Detail({
                               step="0.01"
                               value={freightRate}
                               disabled={locked || receivedAny}
-                              onValueChange={setFreightRate}
+                              onValueChange={(value) => {
+                                setFreightRate(value)
+                                setFreightSource("actual")
+                              }}
                             />
                           </FieldCard>
                           <FieldCard label="Chargeable weight kg">
@@ -867,22 +872,14 @@ function Detail({
                       {draftCharges
                         .filter((charge) => charge.group === group)
                         .map((charge) => {
-                          const status = moneyStatus(charge.amount, charge.assumed)
+                          const status = figureStatus(charge.source)
                           return (
                           <FieldCard
                             key={charge.key}
                             label={chargeLabel(charge.description)}
                             badge={<StatusBadge status={status} />}
                             quiet={status !== "Actual"}
-                            hint={
-                              status === "Actual"
-                                ? "Entered on this shipment"
-                                : status === "Projected"
-                                  ? `Projected from the previous order (${money(Number(charge.assumed) || 0, business.currency)})`
-                                  : status === "Missing"
-                                    ? "No projection available"
-                                    : "Pending"
-                            }
+                            hint={projectionHint(charge.assumed, business.currency, projectionCount, status)}
                           >
                             <Input
                               type="number"
@@ -892,7 +889,9 @@ function Detail({
                               disabled={locked || receivedAny}
                               onValueChange={(value) =>
                                 setDraftCharges((current) =>
-                                  current.map((item) => (item.key === charge.key ? { ...item, amount: value } : item)),
+                                  current.map((item) =>
+                                    item.key === charge.key ? { ...item, amount: value, source: "actual" } : item,
+                                  ),
                                 )
                               }
                             />
@@ -904,13 +903,13 @@ function Detail({
                       <>
                         <ValueCard
                           label="Freight Total"
-                          badge={<StatusBadge status={freightBadge} />}
-                          value={money(entered("freight") || calculatedFreight, business.currency)}
+                          badge={<StatusBadge status={groupBadge("freight")} />}
+                          value={money(freightFigure, business.currency)}
                         />
                         <ValueCard
                           label="Actual Freight / Financial Truth"
-                          badge={<StatusBadge status={freightBadge === "Actual" ? "Actual" : "Pending"} />}
-                          value={money(freightBadge === "Actual" ? entered("freight") || calculatedFreight : 0, business.currency)}
+                          badge={<StatusBadge status={groupBadge("freight")} />}
+                          value={money(freightFigure, business.currency)}
                         />
                       </>
                     ) : (
@@ -923,21 +922,26 @@ function Detail({
                   </div>
                 </FormSection>
               ))}
-            {issues.length > 0 ? (
-              <p className="text-sm text-destructive">Not ready — actuals required. {issues[0]}</p>
-            ) : (
-              <p className="text-sm text-muted-foreground">Actuals are ready. Preview includes defaults until you change a projected value.</p>
-            )}
-            {open ? (
-              <Button
-                type="button"
-                variant="outline"
-                disabled={pending || receivedAny}
-                onClick={() => void run(() => callRpc(supabase, "save_shipment_actuals", actualPayload()), "Shipment details saved.")}
-              >
-                Save Shipment Details
-              </Button>
-            ) : null}
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3">
+              <div>
+                <div className="text-sm font-medium">
+                  {issues.length > 0 ? "Not Ready - actuals required" : "Actuals are ready"}
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {issues.length > 0 ? issues[0] : "Preview includes defaults until you change a projected value."}
+                </p>
+              </div>
+              {open ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={pending || receivedAny}
+                  onClick={() => void run(() => callRpc(supabase, "save_shipment_actuals", actualPayload()), "Shipment details saved.")}
+                >
+                  Save Shipment Details
+                </Button>
+              ) : null}
+            </div>
           </CardContent>
         </Card>
       )}
@@ -945,19 +949,27 @@ function Detail({
 
       <Card>
         <CardHeader>
-          <CardTitle>Final Accounting Summary</CardTitle>
+          <p className="text-xs font-medium tracking-[0.14em] text-muted-foreground">Final accounting summary</p>
+          <CardTitle>Total Cost Summary (Financial Truth)</CardTitle>
           <CardDescription>
-            Review the projected totals before inventory is applied. Line costs allocate shared landing cost by shipment weight.
+            Primary totals use the same figures as the inputs. A line stays Projected until you type over it, then the
+            summary badge turns Actual.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3 text-sm">
-          <ValueCard label="Purchase Cost (Products)" badge={<StatusBadge status="Actual" />} value={money(Number(shipment.merchandise_total), business.currency)} />
-          <ValueCard label="Freight Total" badge={<StatusBadge status={freightBadge} />} value={money(entered("freight") || calculatedFreight, business.currency)} />
-          <ValueCard label="Shipping Company Total" badge={<StatusBadge status={groupBadge("shipping_company")} />} value={money(entered("shipping_company"), business.currency)} />
-          <ValueCard label="Clearance Total" badge={<StatusBadge status={groupBadge("clearance")} />} value={money(entered("clearance"), business.currency)} />
-          <Summary label="Landing Cost Total" value={money(previewLanding, business.currency)} />
-          <Summary label="Total Shipment Cost" value={money(Number(shipment.merchandise_total) + previewLanding, business.currency)} />
-          <p className="text-xs text-muted-foreground">Preview includes defaults until actuals are saved.</p>
+          <ValueCard label="Purchase Cost (Products)" badge={<StatusBadge status="Projected" />} quiet value={money(Number(shipment.merchandise_total), business.currency)} />
+          <ValueCard label="Freight Total" badge={<StatusBadge status={groupBadge("freight")} />} quiet={groupBadge("freight") !== "Actual"} value={money(freightFigure, business.currency)} />
+          <ValueCard label="Shipping Company Total" badge={<StatusBadge status={groupBadge("shipping_company")} />} quiet={groupBadge("shipping_company") !== "Actual"} value={money(entered("shipping_company"), business.currency)} />
+          <ValueCard label="Clearance Total" badge={<StatusBadge status={groupBadge("clearance")} />} quiet={groupBadge("clearance") !== "Actual"} value={money(entered("clearance"), business.currency)} />
+          <Summary emphasis label="Landing Cost Total" value={money(previewLanding, business.currency)} />
+          <Summary emphasis label="Total Shipment Cost" value={money(Number(shipment.merchandise_total) + previewLanding, business.currency)} />
+          <div className="mt-2 flex items-center justify-between gap-3 border-t pt-3">
+            <div>
+              <div className="text-xs font-medium tracking-[0.14em] text-muted-foreground">Line-level batch cost</div>
+              <p className="text-xs text-muted-foreground">Line costs allocate shared landing cost by shipment weight.</p>
+            </div>
+            <span className="text-xs text-muted-foreground">Weight-allocated</span>
+          </div>
           {lines.map((line) => {
             const lineWeight = Number(line.quantity) * Number(line.unit_weight_grams)
             const share = weightGrams > 0 ? (lineWeight / weightGrams) * 100 : 0
@@ -968,20 +980,18 @@ function Detail({
             const lineMargin = margin(Number(line.sell_price), finalUnit)
             const left = Number(line.quantity) - Number(line.quantity_received)
             return (
-              <div key={line.id} className="border-t pt-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="font-medium">{line.name}</div>
-                    <div className="text-muted-foreground">
-                      Purchase {money(purchase, business.currency)} · allocated {money(allocated, business.currency)} ·{" "}
-                      {share.toFixed(2)}% of weight
-                      {lineMargin === null ? "" : ` · margin ${(lineMargin * 100).toFixed(2)}%`}
-                    </div>
-                  </div>
-                  <div className="text-right tabular-nums">
-                    <div>{money(finalLine, business.currency)}</div>
-                    <div className="text-muted-foreground">{money(finalUnit, business.currency)} / unit</div>
-                  </div>
+              <div key={line.id} className="rounded-xl border px-4 py-3">
+                <div className="font-medium">{line.name}</div>
+                <div className="text-muted-foreground">
+                  {line.sku} · Qty {quantity(Number(line.quantity))}
+                </div>
+                <div className="mt-2 flex flex-col gap-1">
+                  <Summary quiet label="Purchase cost subtotal" value={money(purchase, business.currency)} />
+                  <Summary quiet label="Allocated landing cost" value={money(allocated, business.currency)} />
+                  <Summary quiet label="Weight share" value={`${share.toFixed(2)}%`} />
+                  <Summary emphasis label="Final line batch cost" value={money(finalLine, business.currency)} />
+                  <Summary emphasis label="Final landed unit" value={money(finalUnit, business.currency)} />
+                  <Summary quiet label="Profit margin" value={lineMargin === null ? "—" : `${(lineMargin * 100).toFixed(2)}%`} />
                 </div>
                 {open && left > 0 && !draft ? (
                   <div className="mt-2 flex items-center gap-2">
@@ -1051,7 +1061,7 @@ function Detail({
           </DialogHeader>
           <div className="flex flex-col gap-2 text-sm">
             <Summary label="Package count" value={packageCount || "Missing"} />
-            <Summary label="Freight total" value={money(entered("freight"), business.currency)} />
+            <Summary label="Freight total" value={money(freightFigure, business.currency)} />
             <Summary label="Shipping company total" value={money(entered("shipping_company"), business.currency)} />
             <Summary label="Clearance total" value={money(entered("clearance"), business.currency)} />
             <Summary label="Actual landed cost" value={money(Number(shipment.landing_total), business.currency)} />
@@ -1107,9 +1117,21 @@ function Stat({ label, value }: { label: string; value: string }) {
   )
 }
 
-function Summary({ label, value }: { label: string; value: string }) {
+function Summary({
+  label,
+  value,
+  emphasis = false,
+  quiet = false,
+}: {
+  label: string
+  value: string
+  emphasis?: boolean
+  quiet?: boolean
+}) {
   return (
-    <div className="flex items-center justify-between gap-3">
+    <div
+      className={`flex items-center justify-between gap-3 ${emphasis ? "font-medium" : quiet ? "text-muted-foreground" : ""}`}
+    >
       <span>{label}</span>
       <span className="tabular-nums">{value}</span>
     </div>

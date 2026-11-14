@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { FlowFrame } from "@/components/flow/flow-frame"
-import { ProcurementNav } from "@/components/procurement/procurement-nav"
 import {
   Card,
   CardContent,
@@ -62,9 +61,8 @@ export function LandingCost({ businessKey }: { businessKey: string }) {
   return (
     <FlowFrame
       businessKey={businessKey}
-      title="Landing cost"
+      title="Landing Cost"
       description="How saved freight and clearance charges land on each SKU."
-      aside={<ProcurementNav businessKey={businessKey} current="landing" />}
     >
       {({ business, supabase }) => <LandingWorksheet business={business} supabase={supabase} />}
     </FlowFrame>

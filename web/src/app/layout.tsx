@@ -37,6 +37,14 @@ export default function RootLayout({
       suppressHydrationWarning
       className={cn("h-full antialiased", geist.variable, geistMono.variable)}
     >
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thaana:wght@500&display=swap"
+          rel="stylesheet"
+        />
+      </head>
       <body className="min-h-full bg-background font-sans text-foreground">
         <ThemeProvider
           attribute="class"

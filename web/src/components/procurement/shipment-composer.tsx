@@ -7,7 +7,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { FlowFrame } from "@/components/flow/flow-frame"
 import { chargesToDrafts, type ChargeDraft } from "@/components/procurement/charge-drafts"
 import { FieldCard, FieldGrid, FormSection } from "@/components/procurement/form-row"
-import { ProcurementNav } from "@/components/procurement/procurement-nav"
 import { catalogGaps, ProductPicker, type CatalogProduct } from "@/components/procurement/product-picker"
 import { UnsavedChangesDialog, useUnsavedChanges } from "@/components/unsaved-changes"
 import { Button } from "@/components/ui/button"
@@ -72,9 +71,8 @@ export function ShipmentComposer({
   return (
     <FlowFrame
       businessKey={businessKey}
-      title={shipmentId ? "Edit draft" : "New draft"}
-      description="Name the shipment, choose products, and save. Converting it starts the tracker."
-      aside={<ProcurementNav businessKey={businessKey} current="drafts" />}
+      title={shipmentId ? "Edit draft order" : "New draft order"}
+      description="Name the shipment, choose products, and save. Converting it starts the shipment tracker."
     >
       {({ business, supabase }) => (
         <Composer
@@ -847,7 +845,7 @@ function Composer({
           </div>
           <div className="flex flex-wrap gap-2">
             <Button type="button" onClick={() => void save()} disabled={pending}>
-              {pending ? "Saving…" : "Save draft"}
+              {pending ? "Saving…" : "Save draft order"}
             </Button>
             <Button type="button" variant="outline" onClick={() => void duplicate()} disabled={pending}>
               Duplicate
@@ -856,7 +854,7 @@ function Composer({
               Convert to shipment
             </Button>
             <Button type="button" variant="ghost" onClick={() => void removeDraft()} disabled={pending}>
-              Delete draft
+              Delete draft order
             </Button>
           </div>
         </CardContent>

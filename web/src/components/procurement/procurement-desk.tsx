@@ -38,8 +38,8 @@ export function ProcurementDesk({ businessKey }: { businessKey: string }) {
   return (
     <FlowFrame
       businessKey={businessKey}
-      title="Inbound shipments"
-      description="Build an inbound shipment from products. Delivering it posts stock for POS."
+      title="Procurement"
+      description="Shipments move from the supplier through the forwarder, freight, customs, and final delivery before stock is added to inventory."
     >
       {({ business, supabase }) => (
         <ShipmentList business={business} businessKey={businessKey} supabase={supabase} />
@@ -121,7 +121,7 @@ function ShipmentList({
       },
       {
         accessorKey: "landing_total",
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Landing cost" />,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Landing Cost" />,
         cell: ({ row }) => money(Number(row.original.landing_total), business.currency),
       },
     ],
@@ -131,19 +131,19 @@ function ShipmentList({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Inbound shipments</CardTitle>
+        <CardTitle>Shipments</CardTitle>
         <CardDescription>Each shipment is a cart of products plus its landing cost.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <div className="flex flex-wrap gap-2">
           <Button nativeButton={false} render={<Link href={`/app/${businessKey}/procurement/new`} />}>
-            New draft
+            New draft order
           </Button>
           <Button nativeButton={false} variant="outline" render={<Link href={`/app/${businessKey}/procurement/drafts`} />}>
-            Draft shipments
+            Draft Orders
           </Button>
           <Button nativeButton={false} variant="outline" render={<Link href={`/app/${businessKey}/procurement/landing`} />}>
-            Landing cost
+            Landing Cost
           </Button>
         </div>
         <DataTable columns={columns} data={view} filterColumn="label" filterPlaceholder="Search shipments…" empty="No shipments yet." getRowId={(row) => row.id} />

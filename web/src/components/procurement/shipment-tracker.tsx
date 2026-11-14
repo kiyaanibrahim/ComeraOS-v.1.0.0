@@ -8,7 +8,6 @@ import { DataTable } from "@/components/data-table/data-table"
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header"
 import type { DataTableFeatures } from "@/components/data-table/data-table-features"
 import { FlowFrame } from "@/components/flow/flow-frame"
-import { ProcurementNav } from "@/components/procurement/procurement-nav"
 import { Badge } from "@/components/ui/badge"
 import {
   Card,
@@ -40,9 +39,8 @@ export function ShipmentTracker({ businessKey }: { businessKey: string }) {
   return (
     <FlowFrame
       businessKey={businessKey}
-      title="Shipment tracker"
-      description="Inbound shipments before they are received. Pipeline cost is the supplier total, before landing charges."
-      aside={<ProcurementNav businessKey={businessKey} current="tracker" />}
+      title="Shipment Tracker"
+      description="Shipments from supplier to inventory. Pipeline cost is the supplier total, before landing charges."
     >
       {({ business, supabase }) => <Tracker business={business} businessKey={businessKey} supabase={supabase} />}
     </FlowFrame>
@@ -180,7 +178,7 @@ function Tracker({
       <Card>
         <CardHeader>
           <CardTitle>Shipments</CardTitle>
-          <CardDescription>Open a row for the stage, actual costs, and inventory confirmation.</CardDescription>
+          <CardDescription>Open a row for the stage, actual costs, and stock added to inventory.</CardDescription>
         </CardHeader>
         <CardContent>
           <DataTable columns={columns} data={view} filterColumn="label" filterPlaceholder="Search shipments…" empty="No shipments yet." getRowId={(row) => row.id} />
