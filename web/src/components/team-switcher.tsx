@@ -71,7 +71,7 @@ export function LayerSwitcher({
 
   const title = layer === "admin" ? "Admin" : (business?.name ?? "Business")
   const subtitle =
-    layer === "admin" ? "Owner" : layer === "settings" ? "Settings" : "Business"
+    layer === "admin" ? "Owner" : layer === "settings" ? "Business settings" : "Business"
   const listed =
     business && !businesses.some((item) => item.id === business.id)
       ? [business, ...businesses]
@@ -114,7 +114,7 @@ export function LayerSwitcher({
                   render={<Link href={`/app/${business.id}/settings`} />}
                 >
                   <OrbitIcon />
-                  Settings
+                  Business settings
                 </DropdownMenuItem>
               ) : null}
               {layer === "settings" && business ? (

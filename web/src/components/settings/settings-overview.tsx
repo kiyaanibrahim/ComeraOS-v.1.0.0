@@ -15,6 +15,7 @@ import { useBusiness } from "@/lib/flow/use-business"
 const descriptions: Record<string, string> = {
   "Business config": "Name, locale, tax ID, and document prefixes.",
   Locations: "Stores, warehouses, and operating sites.",
+  Registers: "Tills for each store, and the warehouse they sell from.",
   Staff: "People, roles, and access.",
   "Payment & billing": "Plan, renewal, and invoices.",
 }
@@ -57,7 +58,7 @@ export function SettingsOverview({ businessKey }: { businessKey: string }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <h1 className="font-heading text-xl font-medium tracking-tight">Settings</h1>
+        <h1 className="font-heading text-xl font-medium tracking-tight">Business settings</h1>
         <p className="text-sm text-muted-foreground">
           {business ? `${business.name}. ${summary}` : summary}
         </p>

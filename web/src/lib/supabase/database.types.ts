@@ -2551,6 +2551,7 @@ export type Database = {
           p_business_id: string
           p_customer_id?: string
           p_discount?: number
+          p_draft_id?: string
           p_lines: Json
           p_method: string
           p_notes?: string
@@ -2558,6 +2559,13 @@ export type Database = {
           p_tendered?: number
         }
         Returns: Json
+      }
+      discard_pos_draft: {
+        Args: {
+          p_business_id: string
+          p_order_id: string
+        }
+        Returns: undefined
       }
       hold_pos_cart: {
         Args: {
@@ -2575,6 +2583,18 @@ export type Database = {
           p_bill_id: string
           p_business_id: string
           p_lines: Json
+        }
+        Returns: Json
+      }
+      save_pos_draft: {
+        Args: {
+          p_business_id: string
+          p_customer_id?: string
+          p_discount?: number
+          p_lines?: Json
+          p_notes?: string
+          p_order_id?: string
+          p_register_id: string
         }
         Returns: Json
       }

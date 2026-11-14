@@ -1,6 +1,6 @@
 import { Suspense } from "react"
 
-import { ProcurementDesk } from "@/components/procurement/procurement-desk"
+import { ShipmentTracker } from "@/components/procurement/shipment-tracker"
 
 export default function Page({
   params,
@@ -16,5 +16,5 @@ export default function Page({
 
 async function Desk({ params }: { params: Promise<{ businessId: string }> }) {
   const { businessId } = await params
-  return <ProcurementDesk businessKey={businessId} />
+  return <ShipmentTracker businessKey={businessId} />
 }

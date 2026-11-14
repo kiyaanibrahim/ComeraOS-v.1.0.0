@@ -528,7 +528,7 @@ function Detail({
       <Card>
         <CardHeader>
           <CardDescription>
-            <Link className="underline-offset-4 hover:underline" href={`/app/${businessKey}/shipments`}>
+            <Link className="underline-offset-4 hover:underline" href={`/app/${businessKey}/procurement`}>
               Back to Shipment Tracker
             </Link>
           </CardDescription>

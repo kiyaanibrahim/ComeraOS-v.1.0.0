@@ -6,7 +6,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent }
 import { MinusIcon, PlusIcon, XIcon } from "lucide-react"
 
 import { PosScreen } from "@/components/pos/pos-screen"
-import { UnsavedChangesDialog, useUnsavedChanges } from "@/components/unsaved-changes"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
@@ -69,6 +68,14 @@ type CustomerRow = {
 type CartLine = { productId: string; name: string; price: number; quantity: number; onHand: number }
 type PayMethod = "cash" | "card" | "bank_transfer"
 type DiscountMode = "amount" | "percent"
+type DraftTicket = {
+  id: string
+  number: string
+  customer_id: string | null
+  notes: string | null
+  discount: number
+  total: number
+}
 type Receipt = {
   number: string
   billNumber: string
@@ -135,11 +142,16 @@ function Desk({
   const [taxRate, setTaxRate] = useState(0)
   const [discountMode, setDiscountMode] = useState<DiscountMode>("amount")
   const [discountInput, setDiscountInput] = useState("")
-  const [hasHold, setHasHold] = useState(false)
+  const [drafts, setDrafts] = useState<DraftTicket[]>([])
+  const [activeId, setActiveId] = useState<string | null>(null)
   const [receipt, setReceipt] = useState<Receipt | null>(null)
   const quoteParams = useSearchParams()
   const quoteId = quoteParams.get("quote")
   const loadedQuote = useRef<string | null>(null)
+  const activeIdRef = useRef<string | null>(null)
+  const skipSave = useRef(false)
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const ticketStrip = useRef<HTMLDivElement>(null)
 
   const load = useCallback(async () => {
     const [productRes, categoryRes, balanceRes, locationRes, registerRes, customerRes, settingsRes] = await Promise.all([
@@ -196,7 +208,7 @@ function Desk({
 
     if (!nextRegisterId) {
       setSession(null)
-      setHasHold(false)
+      setDrafts([])
       return
     }
 
@@ -220,16 +232,6 @@ function Desk({
           }
         : null,
     )
-
-    const heldRes = await supabase
-      .from("orders")
-      .select("id")
-      .eq("business_id", business.id)
-      .eq("register_id", nextRegisterId)
-      .eq("status", "held")
-      .maybeSingle()
-    if (heldRes.error) toast.error(heldRes.error.message)
-    setHasHold(Boolean(heldRes.data))
   }, [business.id, registerId, supabase])
 
   useEffect(() => {
@@ -293,6 +295,8 @@ function Desk({
         toast.error("That quotation has no products to sell.")
         return
       }
+      activeIdRef.current = null
+      setActiveId(null)
       setCart(next)
       setCustomerId(quoteRes.data?.customer_id ?? "")
       setDiscountMode("amount")
@@ -362,17 +366,15 @@ function Desk({
   const taxable = Math.round((subtotal - discount) * 100) / 100
   const tax = Math.round((taxable * taxRate) / 100 * 100) / 100
   const total = Math.round((taxable + tax) * 100) / 100
-  const unsaved = useUnsavedChanges(cart.length > 0)
   const cashReceived = Number(tendered) || 0
   const changeDue = method === "cash" ? Math.max(0, cashReceived - total) : 0
   const registerOpen = Boolean(session)
 
   function chooseRegister(next: string) {
+    skipSave.current = true
+    activeIdRef.current = null
+    setActiveId(null)
     setRegisterId(next)
-    setCart([])
-    setNotes("")
-    setDiscountInput("")
-    setCustomerId("")
   }
 
   function setQty(product: ProductRow, next: number) {
@@ -442,70 +444,239 @@ function Desk({
     setSearch("")
   }
 
-  async function holdCart() {
-    if (!selected || !registerOpen || cart.length === 0) return
-    setBusy(true)
-    try {
-      await callRpc(supabase, "hold_pos_cart", {
-        p_business_id: business.id,
-        p_register_id: selected.id,
-        p_lines: cart.map((line) => ({ product_id: line.productId, quantity: line.quantity })),
-        p_customer_id: customerId || null,
-        p_notes: notes.trim() || null,
-        p_discount: discount,
-      })
-      setCart([])
-      setNotes("")
-      setCustomerId("")
-      setDiscountInput("")
-      setHasHold(true)
-      toast.success("Cart held on this register.")
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not hold the cart")
-    } finally {
-      setBusy(false)
+  function clearSaveTimer() {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current)
+      saveTimer.current = null
     }
   }
 
-  async function resumeHold() {
-    if (!selected || !registerOpen) return
-    setBusy(true)
+  function rememberTicket(ticket: DraftTicket) {
+    setDrafts((current) => {
+      const index = current.findIndex((item) => item.id === ticket.id)
+      if (index === -1) return [...current, ticket]
+      const next = current.slice()
+      next[index] = ticket
+      return next
+    })
+  }
+
+  function blankTicket() {
+    skipSave.current = true
+    activeIdRef.current = null
+    setActiveId(null)
+    setCart([])
+    setNotes("")
+    setCustomerId("")
+    setCustomerQuery("")
+    setDiscountMode("amount")
+    setDiscountInput("")
+    setTendered("")
+  }
+
+  async function persistDraft() {
+    if (!selected || !registerOpen) return activeIdRef.current
+    const orderId = activeIdRef.current
+    if (cart.length === 0 && !orderId) return null
+    const saved = await callRpc<{
+      id: string
+      number: string
+      customer_id: string | null
+      notes: string | null
+      discount: number
+      total: number
+    } | null>(supabase, "save_pos_draft", {
+      p_business_id: business.id,
+      p_register_id: selected.id,
+      p_order_id: orderId,
+      p_lines: cart.map((line) => ({ product_id: line.productId, quantity: line.quantity })),
+      p_customer_id: customerId || null,
+      p_notes: notes.trim() || null,
+      p_discount: discount,
+    })
+    if (!saved) {
+      if (orderId) setDrafts((current) => current.filter((item) => item.id !== orderId))
+      activeIdRef.current = null
+      setActiveId(null)
+      return null
+    }
+    activeIdRef.current = saved.id
+    setActiveId(saved.id)
+    rememberTicket({
+      id: saved.id,
+      number: saved.number,
+      customer_id: saved.customer_id,
+      notes: saved.notes,
+      discount: Number(saved.discount),
+      total: Number(saved.total),
+    })
+    return saved.id
+  }
+
+  async function hydrate(id: string) {
+    const [orderRes, lineRes] = await Promise.all([
+      supabase
+        .from("orders")
+        .select("id, number, customer_id, notes, discount, total")
+        .eq("business_id", business.id)
+        .eq("id", id)
+        .eq("status", "draft")
+        .maybeSingle(),
+      supabase
+        .from("order_lines")
+        .select("product_id, description, quantity, unit_price")
+        .eq("business_id", business.id)
+        .eq("order_id", id),
+    ])
+    if (orderRes.error || lineRes.error || !orderRes.data) {
+      toast.error(orderRes.error?.message ?? lineRes.error?.message ?? "This draft is no longer open")
+      return
+    }
+    skipSave.current = true
+    activeIdRef.current = orderRes.data.id
+    setActiveId(orderRes.data.id)
+    setCustomerId(orderRes.data.customer_id ?? "")
+    setCustomerQuery("")
+    setNotes(orderRes.data.notes ?? "")
+    setDiscountMode("amount")
+    setDiscountInput(Number(orderRes.data.discount) > 0 ? String(orderRes.data.discount) : "")
+    setTendered("")
+    setCart(
+      (lineRes.data ?? []).flatMap((line) => {
+        if (!line.product_id) return []
+        return [
+          {
+            productId: line.product_id,
+            name: line.description,
+            price: Number(line.unit_price),
+            quantity: Number(line.quantity),
+            onHand: stock.get(line.product_id) ?? Number(line.quantity),
+          },
+        ]
+      }),
+    )
+    rememberTicket({
+      id: orderRes.data.id,
+      number: orderRes.data.number,
+      customer_id: orderRes.data.customer_id,
+      notes: orderRes.data.notes,
+      discount: Number(orderRes.data.discount),
+      total: Number(orderRes.data.total),
+    })
+  }
+
+  async function openTicket(id: string) {
+    if (id === activeIdRef.current) return
+    clearSaveTimer()
     try {
-      const held = await callRpc<{
-        customer_id: string | null
-        notes: string | null
-        discount: number
-        lines: { product_id: string; name: string; quantity: number; price: number }[]
-      } | null>(supabase, "take_pos_hold", {
-        p_business_id: business.id,
-        p_register_id: selected.id,
-      })
-      if (!held) {
-        setHasHold(false)
-        toast.error("No held cart on this register.")
-        return
-      }
-      setCart(
-        held.lines.map((line) => ({
-          productId: line.product_id,
-          name: line.name,
-          price: Number(line.price),
-          quantity: Number(line.quantity),
-          onHand: stock.get(line.product_id) ?? Number(line.quantity),
-        })),
-      )
-      setCustomerId(held.customer_id ?? "")
-      setNotes(held.notes ?? "")
-      setDiscountMode("amount")
-      setDiscountInput(Number(held.discount) > 0 ? String(held.discount) : "")
-      setHasHold(false)
-      toast.success("Held cart restored.")
+      if (cart.length > 0 || activeIdRef.current) await persistDraft()
+      await hydrate(id)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not restore the held cart")
-    } finally {
-      setBusy(false)
+      toast.error(error instanceof Error ? error.message : "Could not open the draft")
     }
   }
+
+  async function startNewOrder() {
+    clearSaveTimer()
+    try {
+      if (cart.length > 0 || activeIdRef.current) await persistDraft()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not save the draft")
+      return
+    }
+    blankTicket()
+  }
+
+  async function discardTicket(id: string) {
+    clearSaveTimer()
+    const active = id === activeIdRef.current
+    if (active) skipSave.current = true
+    try {
+      await callRpc(supabase, "discard_pos_draft", { p_business_id: business.id, p_order_id: id })
+      setDrafts((current) => current.filter((item) => item.id !== id))
+      if (active) blankTicket()
+    } catch (error) {
+      if (active) skipSave.current = false
+      toast.error(error instanceof Error ? error.message : "Could not discard the draft")
+    }
+  }
+
+  useEffect(() => {
+    if (!registerId || !session) {
+      setDrafts([])
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const draftRes = await supabase
+        .from("orders")
+        .select("id, number, customer_id, notes, discount, total")
+        .eq("business_id", business.id)
+        .eq("register_id", registerId)
+        .eq("source", "pos")
+        .eq("status", "draft")
+        .order("created_at", { ascending: true })
+      if (cancelled) return
+      if (draftRes.error) {
+        toast.error(draftRes.error.message)
+        return
+      }
+      const rows = (draftRes.data ?? []).map((row) => ({
+        id: row.id,
+        number: row.number,
+        customer_id: row.customer_id,
+        notes: row.notes,
+        discount: Number(row.discount),
+        total: Number(row.total),
+      }))
+      setDrafts(rows)
+      if (cancelled || (quoteId && loadedQuote.current === quoteId)) return
+      if (quoteId && loadedQuote.current !== quoteId) return
+      if (activeIdRef.current && rows.some((row) => row.id === activeIdRef.current)) return
+      const latest = rows.at(-1)
+      if (!latest) {
+        blankTicket()
+        return
+      }
+      await hydrate(latest.id)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [business.id, quoteId, registerId, session?.id, supabase])
+
+  useEffect(() => {
+    if (!registerOpen || !selected) return
+    if (skipSave.current) {
+      skipSave.current = false
+      return
+    }
+    saveTimer.current = setTimeout(() => {
+      saveTimer.current = null
+      void persistDraft().catch((error: unknown) => {
+        toast.error(error instanceof Error ? error.message : "Could not save the draft")
+      })
+    }, 400)
+    return () => clearSaveTimer()
+  }, [cart, customerId, discount, notes, registerOpen, selected?.id])
+
+  useEffect(() => {
+    const node = ticketStrip.current
+    if (!node) return
+    node.scrollLeft = node.scrollWidth
+  }, [drafts.length])
+
+  useEffect(() => {
+    const node = ticketStrip.current
+    if (!node) return
+    const onWheel = (event: WheelEvent) => {
+      if (node.scrollWidth <= node.clientWidth) return
+      event.preventDefault()
+      node.scrollLeft += event.deltaY
+    }
+    node.addEventListener("wheel", onWheel, { passive: false })
+    return () => node.removeEventListener("wheel", onWheel)
+  }, [])
 
   async function charge() {
     if (!selected || !registerOpen || cart.length === 0) return
@@ -513,8 +684,10 @@ function Desk({
       toast.error("Cash received is less than the total.")
       return
     }
+    clearSaveTimer()
     setBusy(true)
     try {
+      const draftId = await persistDraft()
       const sale = await callRpc<{
         number: string
         bill_number: string
@@ -536,6 +709,7 @@ function Desk({
         p_notes: notes.trim() || null,
         p_customer_id: customerId || null,
         p_discount: discount,
+        p_draft_id: draftId,
       })
       const chargedName = selectedCustomer?.name ?? null
       setReceipt({
@@ -552,11 +726,8 @@ function Desk({
         change: Number(sale.change),
         customer: chargedName,
       })
-      setCart([])
-      setNotes("")
-      setTendered("")
-      setCustomerId("")
-      setDiscountInput("")
+      if (draftId) setDrafts((current) => current.filter((item) => item.id !== draftId))
+      blankTicket()
       toast.success(`Sale ${sale.number} posted for ${money(Number(sale.total), business.currency)}.`)
       await load()
     } catch (error) {
@@ -567,9 +738,8 @@ function Desk({
   }
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
-      <UnsavedChangesDialog open={unsaved.open} onStay={unsaved.stay} onLeave={unsaved.leave} />
-      <div className="flex flex-col gap-4">
+    <div className="grid gap-4 xl:h-[calc(100svh-11rem)] xl:grid-cols-[minmax(0,1fr)_32rem] xl:gap-x-6 xl:overflow-hidden">
+      <div className="flex min-h-0 flex-col gap-4">
         <div className="rounded-lg border px-4 py-3 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p>
@@ -606,6 +776,7 @@ function Desk({
           onKeyDown={onProductKeyDown}
         />
 
+        <div className="min-h-0 flex-1 overflow-y-auto pr-5">
         {!selected ? (
           <p className="text-sm text-muted-foreground">Add a register before selling.</p>
         ) : !registerOpen ? (
@@ -616,9 +787,9 @@ function Desk({
           </p>
         ) : (
           groups.map(([label, items]) => (
-            <section key={label} className="flex flex-col gap-3">
+            <section key={label} className="mb-4 flex flex-col gap-3">
               <h2 className="text-xs tracking-wide text-muted-foreground uppercase">{label}</h2>
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3">
                 {items.map((product) => {
                   const line = cart.find((item) => item.productId === product.id)
                   const onHand = stock.get(product.id) ?? 0
@@ -665,20 +836,85 @@ function Desk({
             </section>
           ))
         )}
+        </div>
       </div>
 
-      <Card className="h-fit">
-        <CardHeader>
-          <CardDescription>Current order</CardDescription>
-          <CardTitle className="text-3xl tabular-nums">{money(total, business.currency)}</CardTitle>
-          {hasHold ? (
-            <Button type="button" variant="outline" disabled={busy || cart.length > 0} onClick={() => void resumeHold()}>
-              Resume held cart
-            </Button>
-          ) : null}
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          <div className="flex flex-col gap-2">
+      <Card className="flex flex-col xl:h-full xl:min-h-0 xl:overflow-hidden">
+        <div className="flex shrink-0 items-stretch gap-2 px-5 pt-5">
+          <div
+            ref={ticketStrip}
+            className="flex min-w-0 flex-1 snap-x snap-mandatory gap-2 overflow-x-scroll overscroll-x-contain pb-5"
+          >
+            {drafts.map((ticket) => {
+              const name = ticket.customer_id
+                ? customers.find((customer) => customer.id === ticket.customer_id)?.name ?? "Customer"
+                : "Walk-in"
+              const amount = ticket.id === activeId ? total : ticket.total
+              const open = ticket.id === activeId
+              return (
+                <div key={ticket.id} className="group relative w-[calc((100%-1rem)/3)] shrink-0 snap-start">
+                  <button
+                    type="button"
+                    className={cn(
+                      "flex h-full w-full flex-col gap-0.5 rounded-lg border px-3 py-2 pr-7 text-left",
+                      open ? "border-foreground" : "hover:bg-muted",
+                    )}
+                    disabled={!registerOpen || busy}
+                    onClick={() => void openTicket(ticket.id)}
+                  >
+                    <span className="text-xs text-muted-foreground">{ticket.number}</span>
+                    <span className="truncate text-sm">{name}</span>
+                    <span className="text-sm font-medium tabular-nums">{money(amount, business.currency)}</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Discard ${ticket.number}`}
+                    className="absolute top-1.5 right-1.5 hidden size-5 items-center justify-center rounded-full text-muted-foreground group-hover:flex hover:text-foreground"
+                    disabled={!registerOpen || busy}
+                    onClick={() => void discardTicket(ticket.id)}
+                  >
+                    <XIcon className="size-3.5" />
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+          <div className="flex w-10 shrink-0 pb-5">
+          <button
+            type="button"
+            aria-label="New order"
+            className={cn(
+              "flex w-full flex-1 items-center justify-center rounded-lg border",
+              activeId ? "hover:bg-muted" : "border-foreground",
+            )}
+            disabled={!registerOpen || busy}
+            onClick={() => void startNewOrder()}
+          >
+            <PlusIcon className="size-4" />
+          </button>
+          </div>
+        </div>
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-6 overflow-hidden px-5 py-6">
+          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto pr-5">
+            <div className="sticky top-0 z-10 shrink-0 bg-card pb-2">
+              <CardDescription>Current order</CardDescription>
+              <CardTitle className="text-3xl tabular-nums">{money(total, business.currency)}</CardTitle>
+            </div>
+            {cart.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Add items to build the order.</p>
+            ) : (
+              cart.map((line) => (
+                <div key={line.productId} className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-medium">{line.name}</div>
+                    <div className="text-sm text-muted-foreground">{money(line.price, business.currency)} each</div>
+                  </div>
+                  <span className="text-sm tabular-nums">{line.quantity}</span>
+                </div>
+              ))
+            )}
+          </div>
+          <div className="flex shrink-0 flex-col gap-2">
             <div className="flex gap-2">
               <Input
                 placeholder="Search CRM customers…"
@@ -754,21 +990,13 @@ function Desk({
                 ))}
               </div>
             ) : null}
+            <Textarea
+              placeholder="Add a customer request, special handling, or internal note…"
+              value={notes}
+              disabled={!registerOpen}
+              onChange={(event) => setNotes(event.target.value)}
+            />
           </div>
-
-          {cart.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Add items to build the order.</p>
-          ) : (
-            cart.map((line) => (
-              <div key={line.productId} className="flex items-center justify-between gap-2">
-                <div>
-                  <div className="font-medium">{line.name}</div>
-                  <div className="text-sm text-muted-foreground">{money(line.price, business.currency)} each</div>
-                </div>
-                <span className="text-sm tabular-nums">{line.quantity}</span>
-              </div>
-            ))
-          )}
 
           <Dialog open={creating} onOpenChange={setCreating}>
             <DialogContent className="sm:max-w-md">
@@ -821,14 +1049,33 @@ function Desk({
             </DialogContent>
           </Dialog>
 
-          <Textarea
-            placeholder="Add a customer request, special handling, or internal note…"
-            value={notes}
-            disabled={!registerOpen}
-            onChange={(event) => setNotes(event.target.value)}
-          />
+          <div className="flex gap-2">
+            <Select
+              value={discountMode}
+              items={{ amount: "Amount", percent: "Percent" }}
+              onValueChange={(value) => setDiscountMode(value === "percent" ? "percent" : "amount")}
+            >
+              <SelectTrigger className="w-28">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="amount">Amount</SelectItem>
+                <SelectItem value="percent">Percent</SelectItem>
+              </SelectContent>
+            </Select>
+            <Input
+              type="number"
+              min={0}
+              step="0.01"
+              placeholder={discountMode === "percent" ? "Discount %" : "Discount"}
+              value={discountInput}
+              disabled={!registerOpen}
+              onChange={(event) => setDiscountInput(event.target.value)}
+            />
+          </div>
 
-          <div className="space-y-2">
+          <div className="flex shrink-0 flex-col gap-3">
+          <div className="space-y-3">
             <div className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Select payment method</div>
             <div className="grid grid-cols-3 gap-2">
               {PAY_METHODS.map((option) => (
@@ -859,33 +1106,10 @@ function Desk({
               <p className="text-sm text-muted-foreground">Change {money(changeDue, business.currency)}</p>
             </div>
           ) : null}
-
-          <div className="flex gap-2">
-            <Select
-              value={discountMode}
-              items={{ amount: "Amount", percent: "Percent" }}
-              onValueChange={(value) => setDiscountMode(value === "percent" ? "percent" : "amount")}
-            >
-              <SelectTrigger className="w-28">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="amount">Amount</SelectItem>
-                <SelectItem value="percent">Percent</SelectItem>
-              </SelectContent>
-            </Select>
-            <Input
-              type="number"
-              min={0}
-              step="0.01"
-              placeholder={discountMode === "percent" ? "Discount %" : "Discount"}
-              value={discountInput}
-              disabled={!registerOpen}
-              onChange={(event) => setDiscountInput(event.target.value)}
-            />
           </div>
-
-          <div className="space-y-1 border-t pt-3 text-sm">
+        </CardContent>
+        <div className="flex shrink-0 flex-col gap-4 px-5 pt-2 pb-5">
+          <div className="space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-muted-foreground">Subtotal</span>
               <span className="tabular-nums">{money(subtotal, business.currency)}</span>
@@ -898,7 +1122,7 @@ function Desk({
               <span className="text-muted-foreground">Tax {taxRate}%</span>
               <span className="tabular-nums">{money(tax, business.currency)}</span>
             </div>
-            <div className="flex justify-between font-medium">
+            <div className="flex justify-between pt-2 text-base font-medium">
               <span>Total due</span>
               <span className="tabular-nums">{money(total, business.currency)}</span>
             </div>
@@ -914,16 +1138,13 @@ function Desk({
               >
                 {busy ? "Charging…" : `Charge ${money(total, business.currency)}`}
               </Button>
-              <Button type="button" variant="outline" disabled={busy || cart.length === 0} onClick={() => void holdCart()}>
-                Hold cart
-              </Button>
             </div>
           ) : (
             <Button nativeButton={false} size="lg" render={<Link href={`/app/${businessKey}/pos/register`} />}>
               Open register
             </Button>
           )}
-        </CardContent>
+        </div>
       </Card>
       <Dialog open={receipt !== null} onOpenChange={(open) => { if (!open) setReceipt(null) }}>
         <DialogContent className="sm:max-w-md">

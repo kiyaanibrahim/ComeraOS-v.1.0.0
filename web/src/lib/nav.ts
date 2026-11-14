@@ -39,6 +39,7 @@ export function settingsItems(businessId: string): NavItem[] {
     { label: "Overview", href: base },
     { label: "Business config", href: `${base}/settings` },
     { label: "Locations", href: `${base}/locations` },
+    { label: "Registers", href: `${base}/registers` },
     { label: "Staff", href: `${base}/staff` },
     { label: "Payment & billing", href: `${base}/billing` },
   ]
@@ -136,19 +137,6 @@ function businessModules(businessId: string): NavModuleMatch[] {
       items: [{ label: "CRM", href: `${base}/crm` }],
     },
     {
-      id: "procurement",
-      title: "Procurement",
-      backHref: base,
-      roots: [`${base}/procurement`, `${base}/shipments`, `${base}/financials/purchasing`],
-      items: [
-        { label: "Shipments", href: `${base}/procurement` },
-        { label: "Draft Orders", href: `${base}/procurement/drafts` },
-        { label: "Shipment Tracker", href: `${base}/shipments` },
-        { label: "Landing Cost", href: `${base}/procurement/landing` },
-        { label: "Purchasing", href: `${base}/financials/purchasing` },
-      ],
-    },
-    {
       id: "inventory",
       title: "Inventory",
       backHref: base,
@@ -162,11 +150,22 @@ function businessModules(businessId: string): NavModuleMatch[] {
       ],
     },
     {
+      id: "procurement",
+      title: "Procurement",
+      backHref: base,
+      roots: [`${base}/procurement`, `${base}/shipments`],
+      items: [
+        { label: "Shipment Tracker", href: `${base}/procurement` },
+        { label: "Draft Orders", href: `${base}/procurement/drafts` },
+      ],
+    },
+    {
       id: "financials",
       title: "Financials",
       backHref: base,
       roots: [`${base}/financials`],
       items: [
+        { label: "Purchasing", href: `${base}/financials/purchasing` },
         { label: "Expenses", href: `${base}/financials/expenses` },
         { label: "Capital", href: `${base}/financials/capital` },
         { label: "Accounting", href: `${base}/financials/accounting` },
@@ -175,7 +174,7 @@ function businessModules(businessId: string): NavModuleMatch[] {
     },
     {
       id: "settings",
-      title: "Settings",
+      title: "Business settings",
       backHref: base,
       roots: [`${base}/settings`, `${base}/locations`],
       items: settingsItems(businessId),

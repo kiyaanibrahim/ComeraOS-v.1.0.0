@@ -11,6 +11,7 @@ export type BusinessRecord = {
   name: string
   slug: string
   currency: string
+  timezone: string
 }
 
 const uuidPattern =
@@ -44,7 +45,7 @@ export function useBusiness(key: string | null) {
       return
     }
 
-    const query = supabase.from("businesses").select("id, name, slug, currency")
+    const query = supabase.from("businesses").select("id, name, slug, currency, timezone")
     const lookup = uuidPattern.test(key)
       ? await query.eq("id", key).maybeSingle()
       : await query.eq("slug", key).maybeSingle()

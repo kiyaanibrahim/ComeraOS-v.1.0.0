@@ -8,6 +8,7 @@ import { DataTable } from "@/components/data-table/data-table"
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header"
 import type { DataTableFeatures } from "@/components/data-table/data-table-features"
 import { FlowFrame } from "@/components/flow/flow-frame"
+import { LandingWorksheet } from "@/components/procurement/landing-cost"
 import { Badge } from "@/components/ui/badge"
 import {
   Card,
@@ -40,7 +41,7 @@ export function ShipmentTracker({ businessKey }: { businessKey: string }) {
     <FlowFrame
       businessKey={businessKey}
       title="Shipment Tracker"
-      description="Shipments from supplier to inventory. Pipeline cost is the supplier total, before landing charges."
+      description="Overview of inbound shipments, from the supplier through freight and customs to inventory. Pipeline cost is the supplier total. Landing cost shows how freight and clearance land on each SKU."
     >
       {({ business, supabase }) => <Tracker business={business} businessKey={businessKey} supabase={supabase} />}
     </FlowFrame>
@@ -184,6 +185,13 @@ function Tracker({
           <DataTable columns={columns} data={view} filterColumn="label" filterPlaceholder="Search shipments…" empty="No shipments yet." getRowId={(row) => row.id} />
         </CardContent>
       </Card>
+      <section id="landing" className="flex flex-col gap-3">
+        <div className="flex flex-col gap-1">
+          <h2 className="font-heading text-base font-medium">Landing Cost</h2>
+          <p className="text-sm text-muted-foreground">How saved freight and clearance charges land on each SKU.</p>
+        </div>
+        <LandingWorksheet business={business} supabase={supabase} />
+      </section>
     </div>
   )
 }

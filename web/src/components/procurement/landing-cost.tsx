@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 
-import { FlowFrame } from "@/components/flow/flow-frame"
 import {
   Card,
   CardContent,
@@ -55,18 +54,6 @@ type Charge = {
   amount: number
   recoverable: boolean
   cost_group: string
-}
-
-export function LandingCost({ businessKey }: { businessKey: string }) {
-  return (
-    <FlowFrame
-      businessKey={businessKey}
-      title="Landing Cost"
-      description="How saved freight and clearance charges land on each SKU."
-    >
-      {({ business, supabase }) => <LandingWorksheet business={business} supabase={supabase} />}
-    </FlowFrame>
-  )
 }
 
 export function LandingWorksheet({ business, supabase }: { business: BusinessRecord; supabase: FlowClient }) {
@@ -122,7 +109,7 @@ export function LandingWorksheet({ business, supabase }: { business: BusinessRec
   ])
 
   return (
-    <div id="landing" className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4">
       <div className="flex max-w-sm flex-col gap-1.5">
         <Label>Shipment</Label>
         <Select value={shipmentId} items={items} onValueChange={(value) => setShipmentId(value || "all")}>

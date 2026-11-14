@@ -82,11 +82,11 @@ function SidebarNav() {
       ? navForShell(shell)
       : []
   const label =
-    shell.layer === "settings" ? "Settings" : shell.layer === "admin" ? "Admin" : "Home"
+    shell.layer === "settings" ? "Business settings" : shell.layer === "admin" ? "Admin" : "Home"
 
   const module = matchModule(pathname, shell.businessId)
-  const mainSections = module ? sections : sections.filter((section) => section.title !== "Settings")
-  const settingsSection = sections.find((section) => section.title === "Settings")
+  const mainSections = module ? sections : sections.filter((section) => section.title !== "Business settings")
+  const settingsSection = sections.find((section) => section.title === "Business settings")
   const navMain = mainSections.map((section) => {
     const Icon = sectionIcons[section.title] ?? Settings2Icon
     return {

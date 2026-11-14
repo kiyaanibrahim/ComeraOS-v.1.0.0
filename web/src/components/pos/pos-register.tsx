@@ -8,7 +8,6 @@ import { PosScreen, statusVariant } from "@/components/pos/pos-screen"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -40,7 +39,50 @@ type SessionRow = {
   register_id: string
   opening_cash: number
   opened_at: string
+  opened_by: string | null
   status: string
+}
+
+function openDuration(opened: string, now: number) {
+  const mins = Math.max(0, Math.round((now - new Date(opened).getTime()) / 60000))
+  if (mins < 1) return "less than a minute"
+  if (mins < 60) return `${mins}m`
+  const hours = Math.floor(mins / 60)
+  const rest = mins % 60
+  return rest ? `${hours}h ${rest}m` : `${hours}h`
+}
+
+function zonedDay(value: number | string, timeZone: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(value))
+}
+
+function businessZone(timeZone: string) {
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone })
+    return timeZone
+  } catch {
+    return "UTC"
+  }
+}
+
+function openedBeforeToday(opened: string, now: number, timeZone: string) {
+  const zone = businessZone(timeZone)
+  return zonedDay(opened, zone) !== zonedDay(now, zone)
+}
+
+function openedClock(opened: string, timeZone: string) {
+  return new Date(opened).toLocaleString("en-US", {
+    timeZone: businessZone(timeZone),
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  })
 }
 type PaymentRow = { method: string; amount: number; status: string }
 type CountMode = "idle" | "open" | "close"
@@ -60,7 +102,7 @@ export function PosRegister({ businessKey }: { businessKey: string }) {
     <PosScreen
       businessKey={businessKey}
       title="Register"
-      description="Register allocation and open/close control."
+      description="Open and close the register."
       action={
         <Button nativeButton={false} variant="outline" render={<Link href={`/app/${businessKey}/pos`} />}>
           Go to Sell
@@ -76,15 +118,13 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
   const [locations, setLocations] = useState<LocationRow[]>([])
   const [registers, setRegisters] = useState<RegisterRow[]>([])
   const [session, setSession] = useState<SessionRow | null>(null)
+  const [opener, setOpener] = useState<string | null>(null)
   const [payments, setPayments] = useState<PaymentRow[]>([])
+  const [now, setNow] = useState(() => Date.now())
   const [registerId, setRegisterId] = useState("")
-  const [adding, setAdding] = useState(false)
-  const [registerName, setRegisterName] = useState("")
-  const [storeId, setStoreId] = useState("")
   const [mode, setMode] = useState<CountMode>("idle")
   const [summary, setSummary] = useState<CloseSummary | null>(null)
   const [cashCount, setCashCount] = useState(emptyCount)
-  const [saving, setSaving] = useState(false)
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
@@ -110,24 +150,19 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
     )
     setLocations(places)
     setRegisters(tills)
-    setStoreId(
-      (current) =>
-        current ||
-        places.find((place) => (place.kind === "store" || place.kind === "site") && place.fulfillment_warehouse_id)?.id ||
-        "",
-    )
 
     const nextRegisterId = registerId && tills.some((row) => row.id === registerId) ? registerId : tills[0]?.id || ""
     setRegisterId(nextRegisterId)
     if (!nextRegisterId) {
       setSession(null)
+      setOpener(null)
       setPayments([])
       return
     }
 
     const sessionRes = await supabase
       .from("register_sessions")
-      .select("id, register_id, opening_cash, opened_at, status")
+      .select("id, register_id, opening_cash, opened_at, opened_by, status")
       .eq("business_id", business.id)
       .eq("register_id", nextRegisterId)
       .eq("status", "open")
@@ -141,36 +176,49 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
             register_id: open.register_id,
             opening_cash: Number(open.opening_cash),
             opened_at: open.opened_at,
+            opened_by: open.opened_by,
             status: open.status,
           }
         : null,
     )
     if (!open) {
+      setOpener(null)
       setPayments([])
       return
     }
-    const paymentRes = await supabase
-      .from("payments")
-      .select("method, amount, status")
-      .eq("business_id", business.id)
-      .eq("register_session_id", open.id)
+    const [paymentRes, profileRes] = await Promise.all([
+      supabase
+        .from("payments")
+        .select("method, amount, status")
+        .eq("business_id", business.id)
+        .eq("register_session_id", open.id),
+      open.opened_by
+        ? supabase.from("profiles").select("display_name, email").eq("id", open.opened_by).maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+    ])
     if (paymentRes.error) toast.error(paymentRes.error.message)
+    if (profileRes.error) toast.error(profileRes.error.message)
     setPayments(paymentRes.data ?? [])
+    const person = profileRes.data
+    setOpener(person?.display_name || person?.email || null)
   }, [business.id, registerId, supabase])
 
   useEffect(() => {
     void load()
   }, [load])
 
+  useEffect(() => {
+    if (!session) return
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [session?.id])
+
   const selected = registers.find((row) => row.id === registerId) ?? null
   const placeName = useMemo(() => {
     const map = new Map(locations.map((location) => [location.id, location.name]))
     return (id: string) => map.get(id) ?? "Location"
   }, [locations])
-  const stores = locations.filter((location) => location.kind === "store" || location.kind === "site")
-  const storeItems = Object.fromEntries(stores.map((location) => [location.id, location.name]))
-  const selectedStore = stores.find((location) => location.id === storeId) ?? null
-  const warehouseId = selectedStore?.fulfillment_warehouse_id ?? ""
   const registerItems = Object.fromEntries(registers.map((row) => [row.id, `${row.name} · ${placeName(row.location_id)}`]))
   const counted = countTotal(cashCount)
   const sessionTotals = useMemo(() => {
@@ -186,31 +234,11 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
     }
   }, [payments, session?.opening_cash])
   const registerOpen = Boolean(session)
-  const showForm = registers.length === 0 || adding
+  const staleSession = session ? openedBeforeToday(session.opened_at, now, business.timezone) : false
 
   function setDenom(value: number, raw: string) {
     const qty = Math.max(0, Math.floor(Number(raw) || 0))
     setCashCount((current) => ({ ...current, [String(value)]: qty }))
-  }
-
-  async function saveRegister() {
-    const name = registerName.trim()
-    if (!name || !storeId || !warehouseId) return
-    setSaving(true)
-    const { data, error } = await supabase
-      .from("registers")
-      .insert({ business_id: business.id, name, location_id: storeId, warehouse_id: warehouseId })
-      .select("id")
-      .single()
-    setSaving(false)
-    if (error || !data) {
-      toast.error(error?.message ?? "Could not save the register")
-      return
-    }
-    setRegisterName("")
-    setAdding(false)
-    setRegisterId(data.id)
-    toast.success("Register saved.")
   }
 
   async function openRegister() {
@@ -335,15 +363,65 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
           ) : null}
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          <p className="text-sm text-muted-foreground">
-            {registerOpen
-              ? `Open with ${money(session?.opening_cash ?? 0, business.currency)}. Expected cash is ${money(sessionTotals.expectedCash, business.currency)}.`
-              : "Sell is locked until you open an on-site location register."}
-          </p>
+          {registerOpen && session ? (
+            <div className="flex flex-col gap-4">
+              <div>
+                <p className="text-2xl font-medium tabular-nums">{openDuration(session.opened_at, now)}</p>
+                <p className="text-sm text-muted-foreground">
+                  Since {openedClock(session.opened_at, business.timezone)}
+                  {opener ? ` · ${opener}` : ""}
+                </p>
+              </div>
+              {staleSession ? (
+                <p role="status" className="rounded-lg border px-3 py-2 text-sm">
+                  Close it and count the drawer. A register should be closed each working day.
+                </p>
+              ) : null}
+              <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
+                <div>
+                  <dt className="text-muted-foreground">Opening</dt>
+                  <dd className="tabular-nums">{money(session.opening_cash, business.currency)}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Expected cash</dt>
+                  <dd className="tabular-nums">{money(sessionTotals.expectedCash, business.currency)}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Sales</dt>
+                  <dd className="tabular-nums">{sessionTotals.saleCount}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Cash</dt>
+                  <dd className="tabular-nums">{money(sessionTotals.cashSales, business.currency)}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Card</dt>
+                  <dd className="tabular-nums">{money(sessionTotals.cardSales, business.currency)}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Bank transfer</dt>
+                  <dd className="tabular-nums">{money(sessionTotals.bankSales, business.currency)}</dd>
+                </div>
+              </dl>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {registers.length === 0 ? (
+                <>
+                  No register yet.{" "}
+                  <Link href={`/app/${business.slug}/settings/registers`} className="text-foreground underline">
+                    Add one in Business settings.
+                  </Link>
+                </>
+              ) : (
+                "Sell is locked until you open a register."
+              )}
+            </p>
+          )}
           {selected && mode === "idle" ? (
             <Button
               type="button"
-              className="w-fit"
+              className="w-full"
               onClick={() => {
                 setCashCount(emptyCount())
                 setMode(registerOpen ? "close" : "open")
@@ -351,48 +429,6 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
             >
               {registerOpen ? "Close register" : "Open register"}
             </Button>
-          ) : null}
-          {registers.length > 0 && !adding ? (
-            <Button type="button" variant="outline" className="w-fit" onClick={() => setAdding(true)}>
-              Add register
-            </Button>
-          ) : null}
-          {showForm ? (
-            stores.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Add a store and a warehouse in Locations before opening a register.</p>
-            ) : (
-              <div className="flex flex-col gap-3 rounded-lg border p-3">
-                <Input placeholder="Register name" value={registerName} onChange={(event) => setRegisterName(event.target.value)} />
-                <Select value={storeId} items={storeItems} onValueChange={(value) => setStoreId(value ?? "")}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Store" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {stores.map((location) => (
-                      <SelectItem key={location.id} value={location.id}>
-                        {location.name}
-                        {location.fulfillment_warehouse_id ? "" : " · no warehouse"}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-sm text-muted-foreground">
-                  {warehouseId
-                    ? `Stock comes from ${placeName(warehouseId)}.`
-                    : "This store has no warehouse. Link one in Locations before it can sell."}
-                </p>
-                <div className="flex gap-2">
-                  <Button type="button" disabled={saving || !registerName.trim() || !storeId || !warehouseId} onClick={() => void saveRegister()}>
-                    {saving ? "Saving…" : "Save register"}
-                  </Button>
-                  {registers.length > 0 ? (
-                    <Button type="button" variant="ghost" onClick={() => setAdding(false)}>
-                      Cancel
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-            )
           ) : null}
         </CardContent>
       </Card>
