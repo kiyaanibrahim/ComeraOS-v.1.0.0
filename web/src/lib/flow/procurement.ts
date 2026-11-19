@@ -39,6 +39,20 @@ export function nextStage(stage: string) {
   return shipmentStages[Math.min(index + 1, shipmentStages.length - 1)][0]
 }
 
+const advanceLabels: Record<string, string> = {
+  order_placed: "Order Placed",
+  at_forwarder: "Forwarder",
+  handed_to_freight: "Freight",
+  arrived: "Arrived",
+  customs: "Customs",
+  cleared: "Cleared",
+  received: "Final Delivery",
+}
+
+export function advanceLabel(stage: string) {
+  return advanceLabels[stage] ?? stageLabel(stage)
+}
+
 export const chargeGroups = [
   ["freight", "Freight"],
   ["shipping_company", "Shipping company"],

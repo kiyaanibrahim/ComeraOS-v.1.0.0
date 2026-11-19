@@ -43,8 +43,9 @@ import {
 } from "@/components/reui/timeline"
 import { autoBatchReference } from "@/lib/flow/codes"
 import { margin, suggestedPackages } from "@/lib/flow/cost"
-import { money, quantity, statusLabel } from "@/lib/flow/format"
+import { money, quantity } from "@/lib/flow/format"
 import {
+  advanceLabel,
   chargeGroups,
   groupLabel,
   lifecycleMilestones,
@@ -470,6 +471,9 @@ function Detail({
   }
 
   const upcoming = nextStage(shipment.stage)
+  const canAdvance = open && upcoming !== "stock_added"
+  const showTransit = shipment.status === "pending" && !draft
+  const showCancel = open && !draft && !receivedAny
   const recorded = new Map<string, string>()
   for (const event of events) {
     if (event.stage && !recorded.has(event.stage)) recorded.set(event.stage, event.occurred_at)
@@ -526,112 +530,83 @@ function Detail({
     <div className="flex flex-col gap-4">
       <UnsavedChangesDialog open={unsaved.open} onStay={unsaved.stay} onLeave={unsaved.leave} />
       <Card>
-        <CardHeader>
+        <CardHeader className="gap-4">
           <CardDescription>
             <Link className="underline-offset-4 hover:underline" href={`/app/${businessKey}/procurement`}>
               Back to Shipment Tracker
             </Link>
           </CardDescription>
-          <CardTitle>Shipment Command Header</CardTitle>
-          <CardDescription>{shipment.name || shipment.reference || "Shipment"}</CardDescription>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="flex min-w-0 flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <CardTitle className="text-xl">{shipment.name || shipment.reference || "Shipment"}</CardTitle>
+                <Badge variant="secondary">{draft ? "Draft order" : stageLabel(shipment.stage)}</Badge>
+              </div>
+              {shipment.reference ? <p className="text-sm text-muted-foreground">{shipment.reference}</p> : null}
+              <p className="text-sm">
+                <span className="text-muted-foreground">Supplier</span> {supplierName || "Pending"}
+              </p>
+              {draft ? (
+                <Link
+                  className="w-fit text-sm underline-offset-4 hover:underline"
+                  href={`/app/${businessKey}/procurement/${shipment.id}/edit`}
+                >
+                  Edit draft order
+                </Link>
+              ) : null}
+            </div>
+            <dl className="grid grid-cols-2 gap-3">
+              <div className="rounded-lg border px-3 py-2">
+                <dt className="text-xs text-muted-foreground">Total units</dt>
+                <dd className="font-medium">{quantity(units)}</dd>
+              </div>
+              <div className="rounded-lg border px-3 py-2">
+                <dt className="text-xs text-muted-foreground">Pipeline cost</dt>
+                <dd className="font-medium">{money(Number(shipment.merchandise_total), business.currency)}</dd>
+              </div>
+            </dl>
+          </div>
         </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          <div className="flex flex-wrap gap-2">
-            <Badge variant="secondary">{draft ? "Draft Order (Internal)" : stageLabel(shipment.stage)}</Badge>
-            <Badge variant={shipment.status === "delivered" ? "positive" : "secondary"}>
-              {statusLabel(shipment.status)}
-            </Badge>
-            {shipment.actuals_locked ? <Badge variant="positive">Actuals locked</Badge> : null}
-          </div>
-          <dl className="grid grid-cols-1 gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
-            <Stat label="Shipment ID" value={shipment.reference || "No reference"} />
-            <Stat label="Supplier" value={supplierName || "Pending Supplier"} />
-            <Stat label="Origin Country" value={shipment.origin_country || "Not set"} />
-            <Stat label="ETA" value={shipment.expected_on || "Pending"} />
-          </dl>
-          <dl className="grid grid-cols-2 gap-3 text-sm">
-            <Stat label="Total Units" value={quantity(units)} />
-            <Stat label="Pipeline Cost (Pre-Landed)" value={money(Number(shipment.merchandise_total), business.currency)} />
-            <Stat label="Total SKUs" value={String(lines.length)} />
-            <Stat label="Batch Apply Status" value={shipment.actuals_locked || shipment.status === "delivered" ? "Applied" : "Pending Apply"} />
-          </dl>
-          <div className="flex flex-wrap gap-2">
-            {draft ? (
-              <Button nativeButton={false} render={<Link href={`/app/${businessKey}/procurement/${shipment.id}/edit`} />}>
-                Edit draft order
-              </Button>
-            ) : null}
-            {open && !draft && upcoming !== "stock_added" ? (
-              <Button
-                type="button"
-                variant="outline"
-                disabled={pending}
-                onClick={() =>
-                  void run(() =>
-                    callRpc(supabase, "set_shipment_stage", {
-                      p_shipment_id: shipment.id,
-                      p_stage: upcoming,
-                      p_note: stageLabel(upcoming),
-                    }),
-                  )
-                }
-              >
-                Advance to {stageLabel(upcoming)}
-              </Button>
-            ) : null}
-            {shipment.status === "pending" && !draft ? (
-              <Button
-                type="button"
-                variant="outline"
-                disabled={pending}
-                onClick={() =>
-                  void run(() =>
-                    callRpc(supabase, "set_shipment_status", {
-                      p_shipment_id: shipment.id,
-                      p_status: "in_transit",
-                      p_note: "Marked in transit",
-                    }),
-                  )
-                }
-              >
-                Mark in transit
-              </Button>
-            ) : null}
-            {open && !draft && !receivedAny ? (
-              <Button
-                type="button"
-                variant="outline"
-                disabled={pending}
-                onClick={() =>
-                  void run(() =>
-                    callRpc(supabase, "set_shipment_status", {
-                      p_shipment_id: shipment.id,
-                      p_status: "cancelled",
-                      p_note: "Cancelled",
-                    }),
-                  )
-                }
-              >
-                Cancel
-              </Button>
-            ) : null}
-            {draft ? (
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={pending}
-                onClick={() =>
-                  void run(async () => {
-                    await callRpc(supabase, "delete_shipment_draft", { p_shipment_id: shipment.id })
-                    router.push(`/app/${businessKey}/procurement/drafts`)
-                  })
-                }
-              >
-                Delete Shipment
-              </Button>
-            ) : null}
-          </div>
-        </CardContent>
+        {canAdvance || draft ? (
+          <CardContent>
+            <div className="flex flex-wrap gap-2">
+              {canAdvance ? (
+                <Button
+                  type="button"
+                  disabled={pending}
+                  onClick={() =>
+                    void run(() =>
+                      draft
+                        ? callRpc(supabase, "convert_shipment_draft", { p_shipment_id: shipment.id })
+                        : callRpc(supabase, "set_shipment_stage", {
+                            p_shipment_id: shipment.id,
+                            p_stage: upcoming,
+                            p_note: stageLabel(upcoming),
+                          }),
+                    )
+                  }
+                >
+                  Advance to {advanceLabel(draft ? "order_placed" : upcoming)}
+                </Button>
+              ) : null}
+              {draft ? (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={pending}
+                  onClick={() =>
+                    void run(async () => {
+                      await callRpc(supabase, "delete_shipment_draft", { p_shipment_id: shipment.id })
+                      router.push(`/app/${businessKey}/procurement/drafts`)
+                    })
+                  }
+                >
+                  Delete
+                </Button>
+              ) : null}
+            </div>
+          </CardContent>
+        ) : null}
       </Card>
 
       <Collapsible open={lifecycleOpen} onOpenChange={setLifecycleOpen}>
@@ -643,6 +618,10 @@ function Detail({
               <CardTitle>Shipment Lifecycle</CardTitle>
               <CardDescription>
                 {dated} / 10 · {checkpoint}
+                {" · "}
+                Origin {shipment.origin_country || "Not set"}
+                {" · "}
+                ETA {shipment.expected_on || "Pending"}
               </CardDescription>
             </div>
             <CollapsibleTrigger className="inline-flex shrink-0 items-center rounded-md border px-3 py-1.5 text-xs font-medium">
@@ -651,6 +630,46 @@ function Detail({
           </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
+          {showTransit || showCancel ? (
+            <div className="flex flex-wrap gap-2">
+              {showTransit ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={pending}
+                  onClick={() =>
+                    void run(() =>
+                      callRpc(supabase, "set_shipment_status", {
+                        p_shipment_id: shipment.id,
+                        p_status: "in_transit",
+                        p_note: "Marked in transit",
+                      }),
+                    )
+                  }
+                >
+                  Mark in transit
+                </Button>
+              ) : null}
+              {showCancel ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={pending}
+                  onClick={() =>
+                    void run(() =>
+                      callRpc(supabase, "set_shipment_status", {
+                        p_shipment_id: shipment.id,
+                        p_status: "cancelled",
+                        p_note: "Cancelled",
+                      }),
+                    )
+                  }
+                >
+                  Cancel
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
           {lifecycleOpen ? null : (
             <Timeline orientation="horizontal" value={completedMilestones} className="w-full">
               {lifecycleMilestones.map(([label, stage], index) => {
@@ -1106,15 +1125,6 @@ function spanLabel(from: string | undefined, to: string | undefined) {
   if (!from || !to) return "Duration: pending"
   const days = Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86400000)
   return `${days} days`
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd>{value}</dd>
-    </div>
-  )
 }
 
 function Summary({
