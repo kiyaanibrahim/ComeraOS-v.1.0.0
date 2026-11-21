@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import { usePathname, useRouter } from "next/navigation"
 
 import { UnsavedChangesDialog, useUnsavedChanges } from "@/components/unsaved-changes"
 import { Button } from "@/components/ui/button"
@@ -22,6 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
+import { slugFromName } from "@/lib/businesses"
 import { useBusiness } from "@/lib/flow/use-business"
 import type { Json } from "@/lib/supabase/database.types"
 
@@ -33,6 +35,19 @@ const timezones = {
   "Asia/Dubai": "Asia/Dubai",
   "Europe/London": "Europe/London",
   "America/New_York": "America/New_York",
+}
+
+async function availableSlug(
+  supabase: ReturnType<typeof useBusiness>["supabase"],
+  base: string,
+  businessId: string,
+) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const slug = attempt === 0 ? base : `${base}-${attempt + 1}`
+    const { data } = await supabase.from("businesses").select("id").eq("slug", slug).maybeSingle()
+    if (!data || data.id === businessId) return slug
+  }
+  return `${base}-${businessId.slice(0, 8)}`
 }
 
 function formSnapshot(values: {
@@ -57,6 +72,8 @@ function addressLine(address: Json): string {
 }
 
 export function BusinessConfig({ businessKey }: { businessKey: string }) {
+  const router = useRouter()
+  const pathname = usePathname()
   const { supabase, business, ready, error: loadError, reload } = useBusiness(businessKey)
   const [name, setName] = useState("")
   const [currency, setCurrency] = useState("USD")
@@ -145,9 +162,10 @@ export function BusinessConfig({ businessKey }: { businessKey: string }) {
       return
     }
     setSaving(true)
+    const nextSlug = await availableSlug(supabase, slugFromName(nextName), business.id)
     const businessResult = await supabase
       .from("businesses")
-      .update({ name: nextName, currency, locale, timezone })
+      .update({ name: nextName, slug: nextSlug, currency, locale, timezone })
       .eq("id", business.id)
     const settingsResult = await supabase
       .from("business_settings")
@@ -167,6 +185,10 @@ export function BusinessConfig({ businessKey }: { businessKey: string }) {
     }
     setBaseline(current)
     toast.success("Settings saved.")
+    if (nextSlug !== business.slug) {
+      router.replace(pathname.replace(`/app/${businessKey}`, `/app/${nextSlug}`))
+      return
+    }
     await reload()
   }
 

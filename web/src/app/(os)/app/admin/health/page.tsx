@@ -1,4 +1,3 @@
-import { InsightsView } from "@/components/analytics/insights"
 import { StatusBadge } from "@/components/analytics/status-badge"
 import {
   Card,
@@ -7,8 +6,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { buildInsights } from "@/lib/analytics"
-
 export default function PlatformHealthPage() {
   const configured = Boolean(
     process.env.NEXT_PUBLIC_SUPABASE_URL &&
@@ -30,7 +27,6 @@ export default function PlatformHealthPage() {
           {configured ? "Supabase connected" : "Supabase pending"}
         </StatusBadge>
       </div>
-      <InsightsView data={buildInsights("Health", "platform")} />
       <Card>
         <CardHeader>
           <CardTitle>Data plane</CardTitle>

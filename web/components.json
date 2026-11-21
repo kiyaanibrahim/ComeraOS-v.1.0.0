@@ -28,6 +28,7 @@
       "headers": {
         "Authorization": "Bearer ${SKIPER_LICENSE_KEY}"
       }
-    }
+    },
+    "@beui": "https://beui.dev/r/{name}.json"
   }
 }

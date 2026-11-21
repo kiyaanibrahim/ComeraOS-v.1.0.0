@@ -1,9 +1,6 @@
 import { Suspense } from "react"
 
-import { InsightsView } from "@/components/analytics/insights"
 import { BusinessPortfolio } from "@/components/business-portfolio"
-import { buildInsights } from "@/lib/analytics"
-import { loadVisibleBusinesses } from "@/lib/load-business"
 
 export default function BusinessesPage() {
   return (
@@ -14,7 +11,6 @@ export default function BusinessesPage() {
 }
 
 async function BusinessesContent() {
-  const owned = await loadVisibleBusinesses()
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
@@ -25,8 +21,6 @@ async function BusinessesContent() {
           Every business you own, in one view. Open a card to enter that business.
         </p>
       </div>
-
-      <InsightsView data={buildInsights("Business portfolio", "platform", owned)} />
 
       <BusinessPortfolio />
     </div>

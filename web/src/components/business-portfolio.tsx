@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { Building2Icon } from "lucide-react"
 
-import { StatusBadge, TrendBadge } from "@/components/analytics/status-badge"
+import { StatusBadge } from "@/components/analytics/status-badge"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -30,23 +30,14 @@ import {
 } from "@/components/ui/empty"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { buildInsights } from "@/lib/analytics"
-import { formatMoney, presentBusiness, type Business } from "@/lib/businesses"
+import { formatMoney, presentBusiness, slugFromName, type Business } from "@/lib/businesses"
 import { toast } from "@/components/ui/sonner"
 import { createClient } from "@/lib/supabase/client"
 import Link from "next/link"
 
-function slugFromName(name: string) {
-  const base = name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-  return base || "business"
-}
-
 export function BusinessPortfolio() {
   const [rows, setRows] = useState<Business[]>([])
+  const [stats, setStats] = useState<Record<string, { sales: number; openOrders: number; staff: number; locations: number }>>({})
   const [open, setOpen] = useState(false)
   const [name, setName] = useState("")
   const [pending, setPending] = useState(false)
@@ -54,7 +45,7 @@ export function BusinessPortfolio() {
 
   const load = useCallback(async () => {
     const supabase = createClient()
-    const { data, error } = await supabase.from("businesses").select("name, slug").order("name")
+    const { data, error } = await supabase.from("businesses").select("id, name, slug, currency").order("name")
     if (error || !data) {
       setRows([])
       const text = error?.message ?? "Couldn't load businesses."
@@ -64,6 +55,39 @@ export function BusinessPortfolio() {
     }
     setLoadError(null)
     setRows(data.map((row) => presentBusiness(row)))
+    const ids = data.map((row) => row.id)
+    if (ids.length === 0) {
+      setStats({})
+      return
+    }
+    const since = new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString()
+    const [openOrders, salesOrders, members, locations] = await Promise.all([
+      supabase.from("orders").select("business_id").in("business_id", ids).eq("status", "open"),
+      supabase.from("orders").select("business_id, total, created_at").in("business_id", ids).eq("status", "completed").gte("created_at", since),
+      supabase.from("business_members").select("business_id").in("business_id", ids),
+      supabase.from("locations").select("business_id").in("business_id", ids),
+    ])
+    const today = new Date().toISOString().slice(0, 10)
+    const next: Record<string, { sales: number; openOrders: number; staff: number; locations: number }> = {}
+    for (const row of data) next[row.slug] = { sales: 0, openOrders: 0, staff: 0, locations: 0 }
+    for (const order of openOrders.data ?? []) {
+      const slug = data.find((row) => row.id === order.business_id)?.slug
+      if (slug && next[slug]) next[slug].openOrders += 1
+    }
+    for (const order of salesOrders.data ?? []) {
+      const slug = data.find((row) => row.id === order.business_id)?.slug
+      if (!slug || !next[slug]) continue
+      if (order.created_at.slice(0, 10) === today) next[slug].sales += Number(order.total)
+    }
+    for (const member of members.data ?? []) {
+      const slug = data.find((row) => row.id === member.business_id)?.slug
+      if (slug && next[slug]) next[slug].staff += 1
+    }
+    for (const location of locations.data ?? []) {
+      const slug = data.find((row) => row.id === location.business_id)?.slug
+      if (slug && next[slug]) next[slug].locations += 1
+    }
+    setStats(next)
   }, [])
 
   useEffect(() => {
@@ -105,7 +129,7 @@ export function BusinessPortfolio() {
       {loadError ? <p className="text-sm text-destructive">{loadError}</p> : null}
       <div className="grid gap-4 sm:grid-cols-2">
         {rows.map((business) => {
-          const salesTrend = buildInsights("Home", business.id).metrics[0]
+          const figures = stats[business.id] ?? { sales: business.sales, openOrders: business.openOrders, staff: business.staff, locations: 0 }
           return (
             <Link
               key={business.id}
@@ -119,26 +143,23 @@ export function BusinessPortfolio() {
                       <CardTitle>{business.name}</CardTitle>
                       <CardDescription>{business.plan}</CardDescription>
                     </div>
-                    <div className="flex flex-wrap items-center justify-end gap-2">
-                      <TrendBadge delta={salesTrend?.delta ?? 0} />
-                      <StatusBadge tone={business.billingStatus === "Current" ? "positive" : "negative"}>
-                        {business.billingStatus}
-                      </StatusBadge>
-                    </div>
+                    <StatusBadge tone={business.billingStatus === "Current" ? "positive" : "negative"}>
+                      {business.billingStatus}
+                    </StatusBadge>
                   </div>
                 </CardHeader>
                 <CardContent className="grid grid-cols-3 gap-3">
                   <div className="flex flex-col gap-1">
                     <span className="text-xs text-muted-foreground">Sales</span>
-                    <span className="font-medium">{formatMoney(business.sales)}</span>
+                    <span className="font-medium">{formatMoney(figures.sales)}</span>
                   </div>
                   <div className="flex flex-col gap-1">
                     <span className="text-xs text-muted-foreground">Open orders</span>
-                    <span className="font-medium">{business.openOrders}</span>
+                    <span className="font-medium">{figures.openOrders}</span>
                   </div>
                   <div className="flex flex-col gap-1">
                     <span className="text-xs text-muted-foreground">Staff</span>
-                    <span className="font-medium">{business.staff}</span>
+                    <span className="font-medium">{figures.staff}</span>
                   </div>
                 </CardContent>
               </Card>

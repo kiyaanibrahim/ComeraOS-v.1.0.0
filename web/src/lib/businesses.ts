@@ -20,6 +20,15 @@ export function presentBusiness(row: { slug: string; name: string }): Business {
   }
 }
 
+export function slugFromName(name: string) {
+  const base = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+  return base && base !== "demo" ? base : "business"
+}
+
 export function formatMoney(value: number) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",

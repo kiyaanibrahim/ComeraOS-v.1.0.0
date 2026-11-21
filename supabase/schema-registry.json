@@ -1,10 +1,13 @@
 {
   "routes": {
     "/app": { "tables": ["businesses"] },
-    "/app/[businessId]": { "tables": ["businesses", "orders"] },
+    "/app/[businessId]": { "tables": ["businesses", "orders", "order_lines", "locations"] },
     "/app/[businessId]/pos": { "tables": ["products", "categories", "customers", "inventory_balances", "inventory_movements", "batches", "locations", "registers", "register_sessions", "payments", "orders", "order_lines", "bills", "bill_lines", "business_settings", "quotations", "quotation_lines"] },
-    "/app/[businessId]/pos/register": { "tables": ["registers", "register_sessions", "locations", "payments"] },
-    "/app/[businessId]/pos/sessions": { "tables": ["register_sessions", "registers", "locations", "payments", "profiles", "audit_events", "orders", "bills"] },
+    "/app/[businessId]/pos/register": { "tables": ["registers", "register_sessions", "register_cash_moves", "locations", "payments"] },
+    "/app/[businessId]/pos/sessions": { "tables": ["register_sessions", "register_cash_moves", "registers", "locations", "payments", "profiles", "audit_events", "orders", "bills"] },
+    "/app/[businessId]/online": { "tables": ["orders", "businesses"] },
+    "/app/[businessId]/extensions": { "tables": ["businesses"] },
+    "/app/[businessId]/help": { "tables": ["businesses"] },
     "/app/[businessId]/pos/bills": { "tables": ["bills", "bill_lines", "customers", "payments", "orders", "order_lines", "register_sessions", "sale_returns", "sale_return_lines"] },
     "/app/[businessId]/quotes": { "tables": ["quotations", "quotation_lines", "customers", "products", "business_settings", "orders", "order_lines", "bills", "bill_lines", "audit_events"] },
     "/app/[businessId]/payments": { "tables": ["payments", "bills", "orders", "customers"] },

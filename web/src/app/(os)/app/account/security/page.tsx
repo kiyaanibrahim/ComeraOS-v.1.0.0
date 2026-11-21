@@ -2,7 +2,6 @@
 
 import { useState } from "react"
 
-import { InsightsView } from "@/components/analytics/insights"
 import { StatusBadge } from "@/components/analytics/status-badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -21,8 +20,6 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
-import { buildInsights } from "@/lib/analytics"
-
 export default function SecurityPage() {
   const [mfa, setMfa] = useState(false)
 
@@ -40,7 +37,6 @@ export default function SecurityPage() {
         <StatusBadge tone={mfa ? "positive" : "negative"}>{mfa ? "MFA on" : "MFA off"}</StatusBadge>
         <StatusBadge tone="neutral">1 active session</StatusBadge>
       </div>
-      <InsightsView data={buildInsights("Security & Privacy", "platform")} variant="compact" />
       <Card>
         <CardHeader>
           <CardTitle>Sign-in</CardTitle>

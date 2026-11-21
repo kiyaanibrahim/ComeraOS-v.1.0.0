@@ -195,3 +195,44 @@
 [data-sonner-toast][data-type="error"] [data-icon] {
   color: var(--destructive);
 }
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  #session-print,
+  #session-print *,
+  #island-receipt,
+  #island-receipt * {
+    visibility: visible;
+    color: black;
+  }
+
+  #session-print,
+  #island-receipt {
+    display: block !important;
+    position: absolute;
+    top: 0;
+    left: 0;
+    background: white;
+    color: black;
+  }
+
+  #island-receipt {
+    width: 80mm;
+    padding: 4mm;
+    font-size: 12px;
+  }
+
+  body[data-print="a4"] #session-print {
+    width: 210mm;
+    padding: 16mm;
+  }
+
+  body[data-print="thermal"] #session-print {
+    width: 80mm;
+    padding: 4mm;
+    font-size: 12px;
+  }
+}

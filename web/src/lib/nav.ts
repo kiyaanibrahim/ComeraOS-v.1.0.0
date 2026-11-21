@@ -9,6 +9,7 @@ export type NavSection = {
   title: string
   items: NavItem[]
   drill?: boolean
+  keywords?: string[]
 }
 
 export type NavModule = {
@@ -28,6 +29,7 @@ export function coreNav(businessId: string): NavSection[] {
     ...businessModules(businessId).map((module) => ({
       title: module.title,
       drill: true,
+      keywords: module.keywords,
       items: module.items,
     })),
   ]
@@ -42,6 +44,7 @@ export function settingsItems(businessId: string): NavItem[] {
     { label: "Registers", href: `${base}/registers` },
     { label: "Staff", href: `${base}/staff` },
     { label: "Payment & billing", href: `${base}/billing` },
+    { label: "Extensions", href: `/app/${businessId}/extensions` },
   ]
 }
 
@@ -101,7 +104,7 @@ export function isNavActive(pathname: string, href: string, hrefs: string[]) {
   })
 }
 
-type NavModuleMatch = NavModule & { roots: string[] }
+type NavModuleMatch = NavModule & { roots: string[]; keywords: string[] }
 
 function businessModules(businessId: string): NavModuleMatch[] {
   const base = `/app/${businessId}`
@@ -109,6 +112,7 @@ function businessModules(businessId: string): NavModuleMatch[] {
     {
       id: "pos",
       title: "Point of Sale",
+      keywords: ["pos", "point of sale"],
       backHref: base,
       roots: [`${base}/pos`],
       items: [
@@ -119,8 +123,17 @@ function businessModules(businessId: string): NavModuleMatch[] {
       ],
     },
     {
+      id: "online",
+      title: "Online orders",
+      keywords: ["online", "online orders"],
+      backHref: base,
+      roots: [`${base}/online`],
+      items: [{ label: "Online orders", href: `${base}/online` }],
+    },
+    {
       id: "sales",
       title: "Sales",
+      keywords: ["sales"],
       backHref: base,
       roots: [`${base}/orders`, `${base}/quotes`, `${base}/payments`],
       items: [
@@ -132,6 +145,7 @@ function businessModules(businessId: string): NavModuleMatch[] {
     {
       id: "customers",
       title: "Customers",
+      keywords: ["customers", "crm"],
       backHref: base,
       roots: [`${base}/crm`],
       items: [{ label: "CRM", href: `${base}/crm` }],
@@ -139,6 +153,7 @@ function businessModules(businessId: string): NavModuleMatch[] {
     {
       id: "inventory",
       title: "Inventory",
+      keywords: ["inventory"],
       backHref: base,
       roots: [`${base}/inventory`, `${base}/products`, `${base}/catalog`, `${base}/categories`, `${base}/batches`],
       items: [
@@ -152,6 +167,7 @@ function businessModules(businessId: string): NavModuleMatch[] {
     {
       id: "procurement",
       title: "Procurement",
+      keywords: ["procurement"],
       backHref: base,
       roots: [`${base}/procurement`, `${base}/shipments`],
       items: [
@@ -162,6 +178,7 @@ function businessModules(businessId: string): NavModuleMatch[] {
     {
       id: "financials",
       title: "Financials",
+      keywords: ["financials"],
       backHref: base,
       roots: [`${base}/financials`],
       items: [
@@ -174,9 +191,10 @@ function businessModules(businessId: string): NavModuleMatch[] {
     },
     {
       id: "settings",
-      title: "Business settings",
+      title: "Organization settings",
+      keywords: ["settings", "organization"],
       backHref: base,
-      roots: [`${base}/settings`, `${base}/locations`],
+      roots: [`${base}/settings`, `${base}/locations`, `${base}/extensions`],
       items: settingsItems(businessId),
     },
   ]
@@ -187,6 +205,7 @@ function platformModules(): NavModuleMatch[] {
     {
       id: "admin",
       title: "Admin",
+      keywords: ["admin"],
       backHref: "/app",
       roots: ["/app/admin"],
       items: adminNav[0]?.items ?? [],
@@ -194,6 +213,7 @@ function platformModules(): NavModuleMatch[] {
     {
       id: "account",
       title: "Account",
+      keywords: ["account"],
       backHref: "/app",
       roots: ["/app/account"],
       items: accountNav[0]?.items ?? [],

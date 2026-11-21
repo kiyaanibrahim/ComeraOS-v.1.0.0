@@ -2,7 +2,6 @@
 
 import { useState } from "react"
 
-import { InsightsView } from "@/components/analytics/insights"
 import { StatusBadge } from "@/components/analytics/status-badge"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
@@ -28,8 +27,6 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import { buildInsights } from "@/lib/analytics"
-
 export default function AccountSettingsPage() {
   const [emailAlerts, setEmailAlerts] = useState(true)
   const [integrityAlerts, setIntegrityAlerts] = useState(true)
@@ -52,7 +49,6 @@ export default function AccountSettingsPage() {
           {integrityAlerts ? "Audit on" : "Audit off"}
         </StatusBadge>
       </div>
-      <InsightsView data={buildInsights("Account Settings", "platform")} variant="compact" />
       <Card>
         <CardHeader>
           <CardTitle>Appearance</CardTitle>

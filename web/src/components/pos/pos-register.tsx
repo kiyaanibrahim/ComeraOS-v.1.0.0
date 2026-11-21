@@ -8,13 +8,6 @@ import { PosScreen, statusVariant } from "@/components/pos/pos-screen"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
 import { money } from "@/lib/flow/format"
 import { callRpc } from "@/lib/flow/rpc"
@@ -52,15 +45,6 @@ function openDuration(opened: string, now: number) {
   return rest ? `${hours}h ${rest}m` : `${hours}h`
 }
 
-function zonedDay(value: number | string, timeZone: string) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(value))
-}
-
 function businessZone(timeZone: string) {
   try {
     Intl.DateTimeFormat(undefined, { timeZone })
@@ -68,11 +52,6 @@ function businessZone(timeZone: string) {
   } catch {
     return "UTC"
   }
-}
-
-function openedBeforeToday(opened: string, now: number, timeZone: string) {
-  const zone = businessZone(timeZone)
-  return zonedDay(opened, zone) !== zonedDay(now, zone)
 }
 
 function openedClock(opened: string, timeZone: string) {
@@ -124,7 +103,9 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
   const [registerId, setRegisterId] = useState("")
   const [mode, setMode] = useState<CountMode>("idle")
   const [summary, setSummary] = useState<CloseSummary | null>(null)
-  const [cashCount, setCashCount] = useState(emptyCount)
+  const [cashCount, setCashCount] = useState(() => emptyCount(business.currency))
+  const [userId, setUserId] = useState<string | null>(null)
+  const [cashMoveNet, setCashMoveNet] = useState(0)
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
@@ -160,15 +141,25 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
       return
     }
 
-    const sessionRes = await supabase
-      .from("register_sessions")
-      .select("id, register_id, opening_cash, opened_at, opened_by, status")
-      .eq("business_id", business.id)
-      .eq("register_id", nextRegisterId)
-      .eq("status", "open")
-      .maybeSingle()
+    const [{ data: auth }, sessionRes] = await Promise.all([
+      supabase.auth.getUser(),
+      supabase
+        .from("register_sessions")
+        .select("id, register_id, opening_cash, opened_at, opened_by, status")
+        .eq("business_id", business.id)
+        .eq("status", "open"),
+    ])
+    setUserId(auth.user?.id ?? null)
     if (sessionRes.error) toast.error(sessionRes.error.message)
-    const open = sessionRes.data
+    const mapped = (sessionRes.data ?? []).map((row) => ({
+      id: row.id,
+      register_id: row.register_id,
+      opening_cash: Number(row.opening_cash),
+      opened_at: row.opened_at,
+      opened_by: row.opened_by,
+      status: row.status,
+    }))
+    const open = mapped.find((row) => row.register_id === nextRegisterId) ?? null
     setSession(
       open
         ? {
@@ -184,9 +175,10 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
     if (!open) {
       setOpener(null)
       setPayments([])
+      setCashMoveNet(0)
       return
     }
-    const [paymentRes, profileRes] = await Promise.all([
+    const [paymentRes, profileRes, moveRes] = await Promise.all([
       supabase
         .from("payments")
         .select("method, amount, status")
@@ -195,10 +187,14 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
       open.opened_by
         ? supabase.from("profiles").select("display_name, email").eq("id", open.opened_by).maybeSingle()
         : Promise.resolve({ data: null, error: null }),
+      supabase.from("register_cash_moves").select("kind, amount").eq("business_id", business.id).eq("register_session_id", open.id),
     ])
     if (paymentRes.error) toast.error(paymentRes.error.message)
     if (profileRes.error) toast.error(profileRes.error.message)
+    if (moveRes.error) toast.error(moveRes.error.message)
     setPayments(paymentRes.data ?? [])
+    const net = (moveRes.data ?? []).reduce((sum, row) => sum + (row.kind === "in" ? Number(row.amount) : -Number(row.amount)), 0)
+    setCashMoveNet(net)
     const person = profileRes.data
     setOpener(person?.display_name || person?.email || null)
   }, [business.id, registerId, supabase])
@@ -219,8 +215,7 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
     const map = new Map(locations.map((location) => [location.id, location.name]))
     return (id: string) => map.get(id) ?? "Location"
   }, [locations])
-  const registerItems = Object.fromEntries(registers.map((row) => [row.id, `${row.name} · ${placeName(row.location_id)}`]))
-  const counted = countTotal(cashCount)
+  const counted = countTotal(cashCount, business.currency)
   const sessionTotals = useMemo(() => {
     const succeeded = payments.filter((row) => row.status === "succeeded")
     const by = (want: string) => succeeded.filter((row) => row.method === want).reduce((sum, row) => sum + Number(row.amount), 0)
@@ -230,11 +225,12 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
       cardSales: by("card"),
       bankSales: by("bank_transfer"),
       saleCount: succeeded.length,
-      expectedCash: (session?.opening_cash ?? 0) + cashSales,
+      expectedCash: (session?.opening_cash ?? 0) + cashSales + cashMoveNet,
     }
-  }, [payments, session?.opening_cash])
+  }, [cashMoveNet, payments, session?.opening_cash])
   const registerOpen = Boolean(session)
-  const staleSession = session ? openedBeforeToday(session.opened_at, now, business.timezone) : false
+  const heldByMe = Boolean(session && userId && session.opened_by === userId)
+  const heldByOther = Boolean(session && userId && session.opened_by !== userId)
 
   function setDenom(value: number, raw: string) {
     const qty = Math.max(0, Math.floor(Number(raw) || 0))
@@ -249,9 +245,9 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
         p_business_id: business.id,
         p_register_id: selected.id,
         p_opening_cash: counted,
-        p_opening_count: countPayload(cashCount),
+        p_opening_count: countPayload(cashCount, business.currency),
       })
-      setCashCount(emptyCount())
+      setCashCount(emptyCount(business.currency))
       setMode("idle")
       toast.success(`Register opened with ${money(counted, business.currency)} in the drawer.`)
       await load()
@@ -273,10 +269,10 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
           p_business_id: business.id,
           p_session_id: session.id,
           p_counted_cash: counted,
-          p_closing_count: countPayload(cashCount),
+          p_closing_count: countPayload(cashCount, business.currency),
         },
       )
-      setCashCount(emptyCount())
+      setCashCount(emptyCount(business.currency))
       setMode("idle")
       setSummary({
         opening_cash: Number(result.opening_cash),
@@ -295,6 +291,23 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
       await load()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not close the register")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function forceClose() {
+    if (!session) return
+    setBusy(true)
+    try {
+      await callRpc(supabase, "force_close_register_session", {
+        p_business_id: business.id,
+        p_session_id: session.id,
+      })
+      toast.success("Register force closed.")
+      await load()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not force close the register")
     } finally {
       setBusy(false)
     }
@@ -340,26 +353,23 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
             </Badge>
           </div>
           {registers.length > 0 ? (
-            <Select
-              value={registerId}
-              items={registerItems}
-              onValueChange={(value) => {
-                setRegisterId(value ?? "")
-                setMode("idle")
-                setCashCount(emptyCount())
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-80">
-                <SelectValue placeholder="Register" />
-              </SelectTrigger>
-              <SelectContent>
-                {registers.map((row) => (
-                  <SelectItem key={row.id} value={row.id}>
-                    {row.name} · {placeName(row.location_id)}
-                  </SelectItem>
+            <div className="grid gap-2">
+              {registers.map((row) => (
+                  <button
+                    key={row.id}
+                    type="button"
+                    onClick={() => {
+                      setRegisterId(row.id)
+                      setMode("idle")
+                      setCashCount(emptyCount(business.currency))
+                    }}
+                    className={`rounded-xl border px-3 py-3 text-left ${registerId === row.id ? "ring-2 ring-ring" : ""}`}
+                  >
+                    <span className="font-medium">{row.name}</span>
+                    <p className="text-sm text-muted-foreground">{placeName(row.location_id)}</p>
+                  </button>
                 ))}
-              </SelectContent>
-            </Select>
+            </div>
           ) : null}
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -372,10 +382,8 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
                   {opener ? ` · ${opener}` : ""}
                 </p>
               </div>
-              {staleSession ? (
-                <p role="status" className="rounded-lg border px-3 py-2 text-sm">
-                  Close it and count the drawer. A register should be closed each working day.
-                </p>
+              {heldByOther ? (
+                <p className="text-sm text-muted-foreground">Held by {opener ?? "another login"}. You can view this register.</p>
               ) : null}
               <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
                 <div>
@@ -410,7 +418,7 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
                 <>
                   No register yet.{" "}
                   <Link href={`/app/${business.slug}/settings/registers`} className="text-foreground underline">
-                    Add one in Business settings.
+                    Add one in Organization settings.
                   </Link>
                 </>
               ) : (
@@ -418,16 +426,21 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
               )}
             </p>
           )}
-          {selected && mode === "idle" ? (
+          {selected && mode === "idle" && !heldByOther ? (
             <Button
               type="button"
               className="w-full"
               onClick={() => {
-                setCashCount(emptyCount())
+                setCashCount(emptyCount(business.currency))
                 setMode(registerOpen ? "close" : "open")
               }}
             >
               {registerOpen ? "Close register" : "Open register"}
+            </Button>
+          ) : null}
+          {heldByMe && mode === "idle" ? (
+            <Button type="button" variant="outline" className="w-full" disabled={busy} onClick={() => void forceClose()}>
+              Force close
             </Button>
           ) : null}
         </CardContent>
@@ -458,7 +471,7 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
               : null
           }
           onCancel={() => {
-            setCashCount(emptyCount())
+            setCashCount(emptyCount(business.currency))
             setMode("idle")
           }}
           actionLabel={mode === "open" ? (busy ? "Opening…" : "Open register") : busy ? "Closing…" : "Close register"}

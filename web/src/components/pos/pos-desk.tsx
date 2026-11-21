@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/components/ui/sonner"
+import { pushIslandReceipt } from "@/lib/island-toast"
 import { money, quantity } from "@/lib/flow/format"
 import { callRpc } from "@/lib/flow/rpc"
 import type { BusinessRecord, FlowClient } from "@/lib/flow/use-business"
@@ -54,6 +55,7 @@ type SessionRow = {
   register_id: string
   opening_cash: number
   opened_at: string
+  opened_by: string | null
   status: string
 }
 type CustomerRow = {
@@ -76,21 +78,6 @@ type DraftTicket = {
   discount: number
   total: number
 }
-type Receipt = {
-  number: string
-  billNumber: string
-  lines: { name: string; quantity: number; price: number }[]
-  subtotal: number
-  discount: number
-  tax: number
-  taxRate: number
-  total: number
-  method: string
-  tendered: number
-  change: number
-  customer: string | null
-}
-
 const PAY_METHODS: { id: PayMethod; label: string }[] = [
   { id: "bank_transfer", label: "Bank transfer" },
   { id: "cash", label: "Cash" },
@@ -125,6 +112,7 @@ function Desk({
   const [registers, setRegisters] = useState<RegisterRow[]>([])
   const [customers, setCustomers] = useState<CustomerRow[]>([])
   const [session, setSession] = useState<SessionRow | null>(null)
+  const [userId, setUserId] = useState<string | null>(null)
   const [registerId, setRegisterId] = useState("")
   const [search, setSearch] = useState("")
   const [customerQuery, setCustomerQuery] = useState("")
@@ -138,13 +126,13 @@ function Desk({
   const [notes, setNotes] = useState("")
   const [method, setMethod] = useState<PayMethod>("card")
   const [tendered, setTendered] = useState("")
+  const [transferRef, setTransferRef] = useState("")
   const [busy, setBusy] = useState(false)
   const [taxRate, setTaxRate] = useState(0)
   const [discountMode, setDiscountMode] = useState<DiscountMode>("amount")
   const [discountInput, setDiscountInput] = useState("")
   const [drafts, setDrafts] = useState<DraftTicket[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [receipt, setReceipt] = useState<Receipt | null>(null)
   const quoteParams = useSearchParams()
   const quoteId = quoteParams.get("quote")
   const loadedQuote = useRef<string | null>(null)
@@ -214,7 +202,7 @@ function Desk({
 
     const sessionRes = await supabase
       .from("register_sessions")
-      .select("id, register_id, opening_cash, opened_at, status")
+      .select("id, register_id, opening_cash, opened_at, opened_by, status")
       .eq("business_id", business.id)
       .eq("register_id", nextRegisterId)
       .eq("status", "open")
@@ -228,6 +216,7 @@ function Desk({
             register_id: open.register_id,
             opening_cash: Number(open.opening_cash),
             opened_at: open.opened_at,
+            opened_by: open.opened_by,
             status: open.status,
           }
         : null,
@@ -237,6 +226,10 @@ function Desk({
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    void supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null))
+  }, [supabase])
 
   const selected = registers.find((row) => row.id === registerId) ?? null
   const placeName = useMemo(() => {
@@ -368,7 +361,8 @@ function Desk({
   const total = Math.round((taxable + tax) * 100) / 100
   const cashReceived = Number(tendered) || 0
   const changeDue = method === "cash" ? Math.max(0, cashReceived - total) : 0
-  const registerOpen = Boolean(session)
+  const heldByMe = Boolean(session && userId && session.opened_by === userId)
+  const registerOpen = heldByMe
 
   function chooseRegister(next: string) {
     skipSave.current = true
@@ -472,6 +466,7 @@ function Desk({
     setDiscountMode("amount")
     setDiscountInput("")
     setTendered("")
+    setTransferRef("")
   }
 
   async function persistDraft() {
@@ -689,6 +684,7 @@ function Desk({
     try {
       const draftId = await persistDraft()
       const sale = await callRpc<{
+        id: string
         number: string
         bill_number: string
         lines: { name: string; quantity: number; price: number }[]
@@ -711,24 +707,27 @@ function Desk({
         p_discount: discount,
         p_draft_id: draftId,
       })
-      const chargedName = selectedCustomer?.name ?? null
-      setReceipt({
-        number: sale.number,
+      if (draftId) setDrafts((current) => current.filter((item) => item.id !== draftId))
+      if (method === "bank_transfer" && transferRef.trim() && sale.id) {
+        await supabase.from("payments").update({ external_ref: transferRef.trim() }).eq("business_id", business.id).eq("order_id", sale.id)
+      }
+      setTransferRef("")
+      blankTicket()
+      pushIslandReceipt({
         billNumber: sale.bill_number,
-        lines: sale.lines ?? [],
+        lines: (sale.lines ?? []).map((line) => ({
+          name: line.name,
+          quantity: Number(line.quantity),
+          amount: Number(line.price) * Number(line.quantity),
+        })),
         subtotal: Number(sale.subtotal),
         discount: Number(sale.discount),
         tax: Number(sale.tax),
-        taxRate: Number(sale.tax_rate),
         total: Number(sale.total),
-        method: sale.method,
-        tendered: Number(sale.tendered),
-        change: Number(sale.change),
-        customer: chargedName,
+        currency: business.currency,
+        tendered: sale.method === "cash" ? Number(sale.tendered) : null,
+        change: sale.method === "cash" ? Number(sale.change) : null,
       })
-      if (draftId) setDrafts((current) => current.filter((item) => item.id !== draftId))
-      blankTicket()
-      toast.success(`Sale ${sale.number} posted for ${money(Number(sale.total), business.currency)}.`)
       await load()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not complete the sale")
@@ -745,7 +744,9 @@ function Desk({
             <p>
               {registerOpen && selected
                 ? `Ready. ${selected.name} is open at ${placeName(selected.location_id)}. Stock from ${placeName(selected.warehouse_id)}.`
-                : "Sell is locked until you open a register."}
+                : session
+                  ? "This register is open on another login."
+                  : "Sell is locked until you open a register."}
             </p>
             {registers.length > 0 ? (
               <Select value={registerId} items={registerItems} onValueChange={(value) => chooseRegister(value ?? "")}>
@@ -1106,6 +1107,9 @@ function Desk({
               <p className="text-sm text-muted-foreground">Change {money(changeDue, business.currency)}</p>
             </div>
           ) : null}
+          {method === "bank_transfer" && registerOpen ? (
+            <Input placeholder="Transfer reference" value={transferRef} onValueChange={setTransferRef} />
+          ) : null}
           </div>
         </CardContent>
         <div className="flex shrink-0 flex-col gap-4 px-5 pt-2 pb-5">
@@ -1146,49 +1150,6 @@ function Desk({
           )}
         </div>
       </Card>
-      <Dialog open={receipt !== null} onOpenChange={(open) => { if (!open) setReceipt(null) }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Receipt {receipt?.billNumber}</DialogTitle>
-            <DialogDescription>
-              {receipt?.customer ? receipt.customer : "Walk-in"} · {receipt?.method.replaceAll("_", " ")}
-            </DialogDescription>
-          </DialogHeader>
-          {receipt ? (
-            <div className="flex flex-col gap-2 text-sm">
-              <p className="text-muted-foreground">Order {receipt.number}</p>
-              {receipt.lines.map((line) => (
-                <div key={`${line.name}-${line.price}`} className="flex justify-between gap-3">
-                  <span>
-                    {line.name} × {line.quantity}
-                  </span>
-                  <span className="tabular-nums">{money(Number(line.price) * Number(line.quantity), business.currency)}</span>
-                </div>
-              ))}
-              <div className="space-y-1 border-t pt-2">
-                <div className="flex justify-between"><span>Subtotal</span><span className="tabular-nums">{money(receipt.subtotal, business.currency)}</span></div>
-                <div className="flex justify-between"><span>Discount</span><span className="tabular-nums">{money(receipt.discount, business.currency)}</span></div>
-                <div className="flex justify-between"><span>Tax {receipt.taxRate}%</span><span className="tabular-nums">{money(receipt.tax, business.currency)}</span></div>
-                <div className="flex justify-between font-medium"><span>Total</span><span className="tabular-nums">{money(receipt.total, business.currency)}</span></div>
-                {receipt.method === "cash" ? (
-                  <>
-                    <div className="flex justify-between"><span>Tendered</span><span className="tabular-nums">{money(receipt.tendered, business.currency)}</span></div>
-                    <div className="flex justify-between"><span>Change</span><span className="tabular-nums">{money(receipt.change, business.currency)}</span></div>
-                  </>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => window.print()}>
-              Print
-            </Button>
-            <Button type="button" onClick={() => setReceipt(null)}>
-              Done
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

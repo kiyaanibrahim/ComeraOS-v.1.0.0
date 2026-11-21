@@ -2,7 +2,6 @@ import Link from "next/link"
 import { Suspense } from "react"
 import { connection } from "next/server"
 
-import { InsightsView } from "@/components/analytics/insights"
 import { StatusBadge } from "@/components/analytics/status-badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -13,8 +12,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { buildInsights } from "@/lib/analytics"
-import { loadVisibleBusinesses } from "@/lib/load-business"
 import { createClient } from "@/lib/supabase/server"
 
 const links = [
@@ -58,8 +55,6 @@ async function AccountContent() {
     name = profile?.display_name || email || "Account"
   }
 
-  const owned = await loadVisibleBusinesses()
-
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
@@ -74,7 +69,6 @@ async function AccountContent() {
         <StatusBadge tone="positive">Active</StatusBadge>
         <StatusBadge tone="positive">Email verified</StatusBadge>
       </div>
-      <InsightsView data={buildInsights("Profile Overview", "platform", owned)} />
       <Card>
         <CardHeader>
           <CardTitle>{name}</CardTitle>

@@ -1929,6 +1929,39 @@ export type Database = {
           },
         ]
       }
+      register_cash_moves: {
+        Row: {
+          amount: number
+          business_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          kind: string
+          note: string | null
+          register_session_id: string
+        }
+        Insert: {
+          amount: number
+          business_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          kind: string
+          note?: string | null
+          register_session_id: string
+        }
+        Update: {
+          amount?: number
+          business_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          kind?: string
+          note?: string | null
+          register_session_id?: string
+        }
+        Relationships: []
+      }
       register_sessions: {
         Row: {
           business_id: string
@@ -1944,6 +1977,9 @@ export type Database = {
           opening_cash: number
           opening_count: Json
           register_id: string
+          session_number: number | null
+          closed_by: string | null
+          force_closed: boolean
           status: string
         }
         Insert: {
@@ -1960,6 +1996,9 @@ export type Database = {
           opening_cash?: number
           opening_count?: Json
           register_id: string
+          session_number?: number | null
+          closed_by?: string | null
+          force_closed?: boolean
           status?: string
         }
         Update: {
@@ -1976,6 +2015,9 @@ export type Database = {
           opening_cash?: number
           opening_count?: Json
           register_id?: string
+          session_number?: number | null
+          closed_by?: string | null
+          force_closed?: boolean
           status?: string
         }
         Relationships: [

@@ -33,9 +33,11 @@ import type { BusinessRecord, FlowClient } from "@/lib/flow/use-business"
 
 type SessionRow = {
   id: string
+  session_number: number | null
   register_id: string
   opened_at: string
   opened_by: string | null
+  closed_by: string | null
   closed_at: string | null
   status: string
   opening_cash: number
@@ -46,12 +48,16 @@ type SessionRow = {
 type SaleRow = { id: string; number: string; total: number; status: string }
 type RegisterRow = { id: string; name: string; location_id: string }
 type LocationRow = { id: string; name: string }
-type PaymentRow = { register_session_id: string | null; method: string; amount: number; status: string }
+type PaymentRow = { register_session_id: string | null; method: string; amount: number; status: string; external_ref: string | null; bill_id: string | null }
 type Person = { id: string; display_name: string; email: string | null }
 type AuditRow = { entity_id: string | null; actor_id: string | null }
+type CashMove = { id: string; kind: string; amount: number; note: string | null; created_at: string }
+type SessionPayment = { id: string; method: string; amount: number; external_ref: string | null; bill: string }
 
 type View = {
   id: string
+  number: string
+  openedById: string | null
   shortId: string
   location: string
   register: string
@@ -125,13 +131,20 @@ function Sessions({ business, supabase }: { business: BusinessRecord; supabase: 
   const [loading, setLoading] = useState(true)
   const [active, setActive] = useState<View | null>(null)
   const [sales, setSales] = useState<SaleRow[]>([])
+  const [moves, setMoves] = useState<CashMove[]>([])
+  const [payments, setPayments] = useState<SessionPayment[]>([])
   const [voiding, setVoiding] = useState(false)
+  const [userId, setUserId] = useState<string | null>(null)
+  const [moveKind, setMoveKind] = useState("in")
+  const [moveAmount, setMoveAmount] = useState("")
+  const [moveNote, setMoveNote] = useState("")
+  const [savingMove, setSavingMove] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     const sessionRes = await supabase
       .from("register_sessions")
-      .select("id, register_id, opened_at, opened_by, closed_at, status, opening_cash, expected_cash, counted_cash, cash_difference")
+      .select("id, session_number, register_id, opened_at, opened_by, closed_by, closed_at, status, opening_cash, expected_cash, counted_cash, cash_difference")
       .eq("business_id", business.id)
       .order("opened_at", { ascending: false })
       .limit(200)
@@ -150,7 +163,7 @@ function Sessions({ business, supabase }: { business: BusinessRecord; supabase: 
       sessionIds.length
         ? supabase
             .from("payments")
-            .select("register_session_id, method, amount, status")
+            .select("register_session_id, method, amount, status, external_ref, bill_id")
             .eq("business_id", business.id)
             .in("register_session_id", sessionIds)
         : Promise.resolve({ data: [], error: null }),
@@ -171,7 +184,7 @@ function Sessions({ business, supabase }: { business: BusinessRecord; supabase: 
     const audits = (auditRes.data ?? []) as AuditRow[]
     const peopleIds = [
       ...new Set(
-        [...sessions.map((row) => row.opened_by), ...audits.map((row) => row.actor_id)].filter((id): id is string => Boolean(id)),
+        [...sessions.map((row) => row.opened_by), ...sessions.map((row) => row.closed_by), ...audits.map((row) => row.actor_id)].filter((id): id is string => Boolean(id)),
       ),
     ]
     const [locationRes, profileRes] = await Promise.all([
@@ -207,11 +220,13 @@ function Sessions({ business, supabase }: { business: BusinessRecord; supabase: 
         const split = splits.get(session.id) ?? { cash: 0, bank: 0, card: 0 }
         return {
           id: session.id,
+          number: session.session_number === null ? shortId(session.id) : String(session.session_number),
+          openedById: session.opened_by,
           shortId: shortId(session.id),
           location: register ? locationMap.get(register.location_id) ?? "—" : "—",
           register: register?.name ?? "Register",
           openedBy: personLabel(people, session.opened_by),
-          closedBy: personLabel(people, closedBy.get(session.id) ?? null),
+          closedBy: personLabel(people, session.closed_by ?? closedBy.get(session.id) ?? null),
           openedAt: stamp(session.opened_at),
           closedAt: stamp(session.closed_at),
           duration: duration(session.opened_at, session.closed_at),
@@ -239,7 +254,7 @@ function Sessions({ business, supabase }: { business: BusinessRecord; supabase: 
     return rows.filter((row) => {
       if (appliedStatus !== "all" && row.status !== appliedStatus) return false
       if (!needle) return true
-      return [row.shortId, row.location, row.register, row.openedBy, row.closedBy, row.status]
+      return [row.number, row.location, row.register, row.openedBy, row.closedBy, row.status]
         .join(" ")
         .toLowerCase()
         .includes(needle)
@@ -255,17 +270,86 @@ function Sessions({ business, supabase }: { business: BusinessRecord; supabase: 
     }),
     { sales: 0, cash: 0, bank: 0, card: 0 },
   )
+  useEffect(() => {
+    void supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null))
+  }, [supabase])
+
   async function openSession(row: View) {
     setActive(row)
-    const saleRes = await supabase
-      .from("orders")
-      .select("id, number, total, status")
-      .eq("business_id", business.id)
-      .eq("register_session_id", row.id)
-      .eq("source", "pos")
-      .order("created_at", { ascending: true })
-    if (saleRes.error) toast.error(saleRes.error.message)
+    const [saleRes, moveRes, payRes] = await Promise.all([
+      supabase
+        .from("orders")
+        .select("id, number, total, status")
+        .eq("business_id", business.id)
+        .eq("register_session_id", row.id)
+        .eq("source", "pos")
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("register_cash_moves")
+        .select("id, kind, amount, note, created_at")
+        .eq("business_id", business.id)
+        .eq("register_session_id", row.id)
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("payments")
+        .select("id, method, amount, external_ref, bill_id")
+        .eq("business_id", business.id)
+        .eq("register_session_id", row.id)
+        .eq("status", "succeeded"),
+    ])
+    if (saleRes.error || moveRes.error || payRes.error) {
+      toast.error(saleRes.error?.message ?? moveRes.error?.message ?? payRes.error?.message ?? "Couldn't load the session.")
+    }
     setSales((saleRes.data ?? []) as SaleRow[])
+    setMoves((moveRes.data ?? []) as CashMove[])
+    const payRows = (payRes.data ?? []) as { id: string; method: string; amount: number; external_ref: string | null; bill_id: string | null }[]
+    const billIds = [...new Set(payRows.map((row) => row.bill_id).filter((id): id is string => Boolean(id)))]
+    const billRes = billIds.length
+      ? await supabase.from("bills").select("id, number").eq("business_id", business.id).in("id", billIds)
+      : { data: [], error: null }
+    const billNumbers = new Map(((billRes.data ?? []) as { id: string; number: string }[]).map((bill) => [bill.id, bill.number]))
+    setPayments(
+      payRows.map((row) => ({
+        id: row.id,
+        method: row.method,
+        amount: Number(row.amount),
+        external_ref: row.external_ref,
+        bill: row.bill_id ? billNumbers.get(row.bill_id) ?? "Bill" : "—",
+      })),
+    )
+  }
+
+  function printSummary(mode: "a4" | "thermal") {
+    document.body.dataset.print = mode
+    window.print()
+  }
+
+  async function addMove() {
+    if (!active || active.openedById !== userId) return
+    const amount = Number(moveAmount)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error("Enter a cash amount.")
+      return
+    }
+    setSavingMove(true)
+    const { error } = await supabase.from("register_cash_moves").insert({
+      business_id: business.id,
+      register_session_id: active.id,
+      kind: moveKind,
+      amount,
+      note: moveNote.trim() || null,
+      created_by: userId,
+    })
+    setSavingMove(false)
+    if (error) {
+      toast.error(error.message)
+      return
+    }
+    setMoveAmount("")
+    setMoveNote("")
+    toast.success("Saved")
+    await openSession(active)
+    await load()
   }
 
   async function voidSale(orderId: string) {
@@ -285,7 +369,7 @@ function Sessions({ business, supabase }: { business: BusinessRecord; supabase: 
 
   const columns = useMemo<ColumnDef<DataTableFeatures, View>[]>(
     () => [
-      { accessorKey: "shortId", header: ({ column }) => <DataTableColumnHeader column={column} title="Session" />, cell: ({ row }) => <span className="font-medium">{row.original.shortId}</span> },
+      { accessorKey: "number", header: ({ column }) => <DataTableColumnHeader column={column} title="Session" />, cell: ({ row }) => <span className="font-medium tabular-nums">{row.original.number}</span> },
       { accessorKey: "location", header: ({ column }) => <DataTableColumnHeader column={column} title="Location" /> },
       { accessorKey: "register", header: ({ column }) => <DataTableColumnHeader column={column} title="Register" /> },
       { accessorKey: "openedBy", header: ({ column }) => <DataTableColumnHeader column={column} title="Opened by" /> },
@@ -385,32 +469,95 @@ function Sessions({ business, supabase }: { business: BusinessRecord; supabase: 
           )}
         </CardContent>
       </Card>
+      {active ? (
+        <div id="session-print" className="hidden print:block">
+          <p className="font-medium">Session {active.number}</p>
+          <p>{active.register} · {active.location}</p>
+          <p>Opened by {active.openedBy} · Closed by {active.closedBy}</p>
+          <p>Sales {money(active.sales, business.currency)} · Expected {active.expected === null ? "—" : money(active.expected, business.currency)}</p>
+          {moves.map((move) => (
+            <p key={move.id}>Cash {move.kind} {money(Number(move.amount), business.currency)} {move.note ?? ""} {stamp(move.created_at)}</p>
+          ))}
+          {payments.map((payment) => (
+            <p key={payment.id}>
+              {payment.bill} · {payment.method.replaceAll("_", " ")} {money(payment.amount, business.currency)}
+              {payment.method === "bank_transfer" && payment.external_ref ? ` · ${payment.external_ref}` : ""}
+            </p>
+          ))}
+        </div>
+      ) : null}
       <Dialog open={active !== null} onOpenChange={(open) => { if (!open) setActive(null) }}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Session {active?.shortId}</DialogTitle>
+            <DialogTitle>Session {active?.number}</DialogTitle>
             <DialogDescription>
-              {active?.status === "open" ? "Void a completed sale while this session is open." : "This session is closed. Return bills from Bill History."}
+              {active?.status === "open" ? "Cash moves and bills for this open session." : "Closed session. Return bills from Bill History."}
             </DialogDescription>
           </DialogHeader>
-          <div className="flex max-h-80 flex-col gap-2 overflow-auto text-sm">
-            {sales.length === 0 ? <p className="text-muted-foreground">No counter sales in this session.</p> : null}
-            {sales.map((sale) => (
-              <div key={sale.id} className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="font-medium">{sale.number}</p>
-                  <p className="text-muted-foreground capitalize">{sale.status}</p>
+          <div className="flex max-h-[28rem] flex-col gap-4 overflow-auto text-sm">
+            <div className="flex flex-col gap-2">
+              <p className="text-xs tracking-wide text-muted-foreground uppercase">Cash in and out</p>
+              {moves.length === 0 ? <p className="text-muted-foreground">No cash moves.</p> : null}
+              {moves.map((move) => (
+                <div key={move.id} className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-medium capitalize">{move.kind === "in" ? "Cash in" : "Cash out"}</p>
+                    <p className="text-muted-foreground">{move.note || stamp(move.created_at)}</p>
+                  </div>
+                  <span className="tabular-nums">{money(Number(move.amount), business.currency)}</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="tabular-nums">{money(Number(sale.total), business.currency)}</span>
-                  {active?.status === "open" && sale.status === "completed" ? (
-                    <Button type="button" size="sm" variant="outline" disabled={voiding} onClick={() => void voidSale(sale.id)}>
-                      Void
-                    </Button>
-                  ) : null}
+              ))}
+              {active?.status === "open" && active.openedById === userId ? (
+                <div className="flex flex-col gap-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button type="button" size="sm" variant={moveKind === "in" ? "default" : "outline"} onClick={() => setMoveKind("in")}>Cash in</Button>
+                    <Button type="button" size="sm" variant={moveKind === "out" ? "default" : "outline"} onClick={() => setMoveKind("out")}>Cash out</Button>
+                  </div>
+                  <Input type="number" min={0} step="0.01" placeholder="Amount" value={moveAmount} onValueChange={setMoveAmount} />
+                  <Input placeholder="Note" value={moveNote} onValueChange={setMoveNote} />
+                  <Button type="button" size="sm" disabled={savingMove} onClick={() => void addMove()}>{savingMove ? "Saving…" : "Add"}</Button>
                 </div>
-              </div>
-            ))}
+              ) : null}
+            </div>
+            <div className="flex flex-col gap-2">
+              <p className="text-xs tracking-wide text-muted-foreground uppercase">Payments</p>
+              {payments.length === 0 ? <p className="text-muted-foreground">No payments.</p> : null}
+              {payments.map((payment) => (
+                <div key={payment.id} className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-medium">{payment.bill}</p>
+                    <p className="text-muted-foreground capitalize">
+                      {payment.method.replaceAll("_", " ")}
+                      {payment.method === "bank_transfer" && payment.external_ref ? ` · ${payment.external_ref}` : ""}
+                    </p>
+                  </div>
+                  <span className="tabular-nums">{money(payment.amount, business.currency)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-col gap-2">
+              {sales.length === 0 ? <p className="text-muted-foreground">No counter sales in this session.</p> : null}
+              {sales.map((sale) => (
+                <div key={sale.id} className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-medium">{sale.number}</p>
+                    <p className="text-muted-foreground capitalize">{sale.status}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="tabular-nums">{money(Number(sale.total), business.currency)}</span>
+                    {active?.status === "open" && sale.status === "completed" ? (
+                      <Button type="button" size="sm" variant="outline" disabled={voiding} onClick={() => void voidSale(sale.id)}>
+                        Void
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => printSummary("a4")}>Print A4</Button>
+            <Button type="button" variant="outline" onClick={() => printSummary("thermal")}>Print 80mm</Button>
           </div>
         </DialogContent>
       </Dialog>

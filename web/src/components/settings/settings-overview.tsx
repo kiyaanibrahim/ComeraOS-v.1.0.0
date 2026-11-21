@@ -18,11 +18,12 @@ const descriptions: Record<string, string> = {
   Registers: "Tills for each store, and the warehouse they sell from.",
   Staff: "People, roles, and access.",
   "Payment & billing": "Plan, renewal, and invoices.",
+  Extensions: "Online store, accounting, and developer connections.",
 }
 
 export function SettingsOverview({ businessKey }: { businessKey: string }) {
   const { supabase, business, error } = useBusiness(businessKey)
-  const [summary, setSummary] = useState("Loading business settings…")
+  const [summary, setSummary] = useState("Loading organization settings…")
 
   useEffect(() => {
     if (!business) return
@@ -58,7 +59,7 @@ export function SettingsOverview({ businessKey }: { businessKey: string }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <h1 className="font-heading text-xl font-medium tracking-tight">Business settings</h1>
+        <h1 className="font-heading text-xl font-medium tracking-tight">Organization settings</h1>
         <p className="text-sm text-muted-foreground">
           {business ? `${business.name}. ${summary}` : summary}
         </p>
