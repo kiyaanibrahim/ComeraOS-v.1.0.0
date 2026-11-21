@@ -1,0 +1,1 @@
+-- applied from supabase/migrations/20261119131800_register_holder.sql via a follow-up file read
