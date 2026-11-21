@@ -2,9 +2,6 @@
 
 import { useEffect, useState } from "react"
 
-import { DonutChart } from "@/components/analytics/charts"
-import { StatusBadge } from "@/components/analytics/status-badge"
-import { DatePicker } from "@/components/date-picker"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -14,120 +11,110 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import {
-  Field,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field"
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Textarea } from "@/components/ui/textarea"
+import { toast } from "@/components/ui/sonner"
+import { profileUpdatedEvent } from "@/lib/profile"
 import { createClient } from "@/lib/supabase/client"
 
 export default function PersonalInformationPage() {
-  const [fullName, setFullName] = useState("")
+  const [nickname, setNickname] = useState("")
+  const [saved, setSaved] = useState("")
   const [email, setEmail] = useState("")
+  const [userId, setUserId] = useState<string | null>(null)
+  const [pending, setPending] = useState(false)
 
   useEffect(() => {
     const supabase = createClient()
     void supabase.auth.getUser().then(async ({ data }) => {
       const user = data.user
       if (!user) return
+      setUserId(user.id)
       const { data: profile } = await supabase
         .from("profiles")
         .select("display_name, email")
         .eq("id", user.id)
         .maybeSingle()
+      const name = profile?.display_name?.trim() ?? ""
       setEmail(profile?.email || user.email || "")
-      setFullName(profile?.display_name || "")
+      setNickname(name)
+      setSaved(name)
     })
   }, [])
+
+  async function save() {
+    if (!userId || pending) return
+    const next = nickname.trim().replace(/\s+/g, " ")
+    if (next.length < 1 || next.length > 40) {
+      toast.error("Use a nickname between 1 and 40 characters.")
+      return
+    }
+    setPending(true)
+    const supabase = createClient()
+    const { data, error } = await supabase
+      .from("profiles")
+      .update({ display_name: next })
+      .eq("id", userId)
+      .select("display_name")
+      .maybeSingle()
+    setPending(false)
+    if (error || !data) {
+      toast.error(error?.message ?? "Couldn't save your nickname.")
+      return
+    }
+    const name = data.display_name.trim()
+    setNickname(name)
+    setSaved(name)
+    window.dispatchEvent(new CustomEvent(profileUpdatedEvent))
+    toast.success("Nickname saved.")
+  }
+
+  const dirty = nickname.trim().replace(/\s+/g, " ") !== saved
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <h1 className="font-heading text-xl font-medium tracking-tight">
-          Personal Information
-        </h1>
+        <h1 className="font-heading text-xl font-medium tracking-tight">Personal Information</h1>
         <p className="text-sm text-muted-foreground">
-          Name, contact details, and preferences.
+          The name ComeraOS uses when it talks to you.
         </p>
       </div>
-      <div className="flex flex-wrap gap-2">
-        <StatusBadge tone="positive">Name on file</StatusBadge>
-        <StatusBadge tone="positive">Email verified</StatusBadge>
-        <StatusBadge tone="negative">Phone missing</StatusBadge>
-      </div>
       <Card>
         <CardHeader>
-          <CardTitle>Profile completeness</CardTitle>
-          <CardDescription>Filled fields on this profile against the ones still empty.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <DonutChart
-            label="Profile completeness"
-            items={[
-              { label: "Filled", value: 2, tone: "positive" },
-              { label: "Missing", value: 3, tone: "negative" },
-            ]}
-          />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>Profile</CardTitle>
-          <CardDescription>Stored on the signed-in user once auth is connected.</CardDescription>
+          <CardTitle>Nickname</CardTitle>
+          <CardDescription>
+            Shown on the business portfolio, your account, and the sidebar.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <FieldGroup>
-            <div className="grid gap-5 sm:grid-cols-2">
-              <Field>
-                <FieldLabel htmlFor="full-name">Full name</FieldLabel>
-                <Input id="full-name" value={fullName} onValueChange={setFullName} />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="email">Email</FieldLabel>
-                <Input id="email" type="email" value={email} onValueChange={setEmail} />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="phone">Phone</FieldLabel>
-                <Input id="phone" type="tel" placeholder="+1 555 0100" />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="language">Language</FieldLabel>
-                <Select
-                  defaultValue="en"
-                  items={{ en: "English", ar: "Arabic", ur: "Urdu" }}
-                >
-                  <SelectTrigger id="language" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="en">English</SelectItem>
-                    <SelectItem value="ar">Arabic</SelectItem>
-                    <SelectItem value="ur">Urdu</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
-            </div>
             <Field>
-              <FieldLabel htmlFor="dob">Date of birth</FieldLabel>
-              <DatePicker id="dob" />
+              <FieldLabel htmlFor="nickname">Nickname</FieldLabel>
+              <Input
+                id="nickname"
+                value={nickname}
+                autoComplete="nickname"
+                maxLength={40}
+                onValueChange={setNickname}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault()
+                    void save()
+                  }
+                }}
+              />
+              <FieldDescription>This replaces the name taken from your email.</FieldDescription>
             </Field>
             <Field>
-              <FieldLabel htmlFor="bio">Notes</FieldLabel>
-              <Textarea id="bio" placeholder="Internal notes about this profile" />
+              <FieldLabel htmlFor="email">Email</FieldLabel>
+              <Input id="email" type="email" value={email} disabled />
             </Field>
           </FieldGroup>
         </CardContent>
         <CardFooter>
-          <Button type="button">Save</Button>
+          <Button type="button" disabled={!dirty || pending || !userId} onClick={() => void save()}>
+            {pending ? "Saving…" : "Save"}
+          </Button>
         </CardFooter>
       </Card>
     </div>

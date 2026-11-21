@@ -218,13 +218,13 @@ export type Database = {
           business_id: string
           created_at: string
           customer_id: string | null
+          discount: number
           id: string
           issued_at: string | null
           number: string
           order_id: string | null
           status: string
           subtotal: number
-          discount: number
           tax: number
           total: number
           updated_at: string
@@ -233,13 +233,13 @@ export type Database = {
           business_id: string
           created_at?: string
           customer_id?: string | null
+          discount?: number
           id?: string
           issued_at?: string | null
           number: string
           order_id?: string | null
           status?: string
           subtotal?: number
-          discount?: number
           tax?: number
           total?: number
           updated_at?: string
@@ -248,13 +248,13 @@ export type Database = {
           business_id?: string
           created_at?: string
           customer_id?: string | null
+          discount?: number
           id?: string
           issued_at?: string | null
           number?: string
           order_id?: string | null
           status?: string
           subtotal?: number
-          discount?: number
           tax?: number
           total?: number
           updated_at?: string
@@ -415,6 +415,7 @@ export type Database = {
           id: string
           locale: string
           name: string
+          organization_id: string
           owner_id: string
           portfolio_id: string | null
           slug: string
@@ -428,6 +429,7 @@ export type Database = {
           id?: string
           locale?: string
           name: string
+          organization_id: string
           owner_id: string
           portfolio_id?: string | null
           slug: string
@@ -441,6 +443,7 @@ export type Database = {
           id?: string
           locale?: string
           name?: string
+          organization_id?: string
           owner_id?: string
           portfolio_id?: string | null
           slug?: string
@@ -449,6 +452,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "businesses_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "businesses_portfolio_id_fkey"
             columns: ["portfolio_id"]
@@ -1137,6 +1147,44 @@ export type Database = {
           },
         ]
       }
+      nav_shortcuts: {
+        Row: {
+          business_id: string
+          created_at: string
+          id: string
+          label: string
+          path: string
+          position: number
+          user_id: string
+        }
+        Insert: {
+          business_id: string
+          created_at?: string
+          id?: string
+          label: string
+          path: string
+          position?: number
+          user_id?: string
+        }
+        Update: {
+          business_id?: string
+          created_at?: string
+          id?: string
+          label?: string
+          path?: string
+          position?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "nav_shortcuts_business_id_fkey"
+            columns: ["business_id"]
+            isOneToOne: false
+            referencedRelation: "businesses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       order_lines: {
         Row: {
           business_id: string
@@ -1191,17 +1239,17 @@ export type Database = {
           created_at: string
           created_by: string | null
           customer_id: string | null
+          discount: number
           id: string
           location_id: string | null
           notes: string | null
           number: string
+          quotation_id: string | null
           register_id: string | null
           register_session_id: string | null
           source: string
           status: string
           subtotal: number
-          quotation_id: string | null
-          discount: number
           tax: number
           total: number
           updated_at: string
@@ -1211,17 +1259,17 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           customer_id?: string | null
+          discount?: number
           id?: string
           location_id?: string | null
           notes?: string | null
           number: string
+          quotation_id?: string | null
           register_id?: string | null
           register_session_id?: string | null
           source?: string
           status?: string
           subtotal?: number
-          quotation_id?: string | null
-          discount?: number
           tax?: number
           total?: number
           updated_at?: string
@@ -1231,17 +1279,17 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           customer_id?: string | null
+          discount?: number
           id?: string
           location_id?: string | null
           notes?: string | null
           number?: string
+          quotation_id?: string | null
           register_id?: string | null
           register_session_id?: string | null
           source?: string
           status?: string
           subtotal?: number
-          quotation_id?: string | null
-          discount?: number
           tax?: number
           total?: number
           updated_at?: string
@@ -1290,6 +1338,30 @@ export type Database = {
             referencedColumns: ["id", "business_id"]
           },
         ]
+      }
+      organizations: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          owner_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          owner_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          owner_id?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       payments: {
         Row: {
@@ -1960,17 +2032,34 @@ export type Database = {
           note?: string | null
           register_session_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "register_cash_moves_business_id_fkey"
+            columns: ["business_id"]
+            isOneToOne: false
+            referencedRelation: "businesses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "register_cash_moves_register_session_id_business_id_fkey"
+            columns: ["register_session_id", "business_id"]
+            isOneToOne: false
+            referencedRelation: "register_sessions"
+            referencedColumns: ["id", "business_id"]
+          },
+        ]
       }
       register_sessions: {
         Row: {
           business_id: string
           cash_difference: number | null
           closed_at: string | null
+          closed_by: string | null
           closing_cash: number | null
           closing_count: Json | null
           counted_cash: number | null
           expected_cash: number | null
+          force_closed: boolean
           id: string
           opened_at: string
           opened_by: string | null
@@ -1978,18 +2067,18 @@ export type Database = {
           opening_count: Json
           register_id: string
           session_number: number | null
-          closed_by: string | null
-          force_closed: boolean
           status: string
         }
         Insert: {
           business_id: string
           cash_difference?: number | null
           closed_at?: string | null
+          closed_by?: string | null
           closing_cash?: number | null
           closing_count?: Json | null
           counted_cash?: number | null
           expected_cash?: number | null
+          force_closed?: boolean
           id?: string
           opened_at?: string
           opened_by?: string | null
@@ -1997,18 +2086,18 @@ export type Database = {
           opening_count?: Json
           register_id: string
           session_number?: number | null
-          closed_by?: string | null
-          force_closed?: boolean
           status?: string
         }
         Update: {
           business_id?: string
           cash_difference?: number | null
           closed_at?: string | null
+          closed_by?: string | null
           closing_cash?: number | null
           closing_count?: Json | null
           counted_cash?: number | null
           expected_cash?: number | null
+          force_closed?: boolean
           id?: string
           opened_at?: string
           opened_by?: string | null
@@ -2016,8 +2105,6 @@ export type Database = {
           opening_count?: Json
           register_id?: string
           session_number?: number | null
-          closed_by?: string | null
-          force_closed?: boolean
           status?: string
         }
         Relationships: [
@@ -2153,6 +2240,115 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "businesses"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      sale_return_lines: {
+        Row: {
+          business_id: string
+          description: string
+          id: string
+          line_total: number
+          order_line_id: string | null
+          product_id: string | null
+          quantity: number
+          return_id: string
+          unit_price: number
+        }
+        Insert: {
+          business_id: string
+          description: string
+          id?: string
+          line_total: number
+          order_line_id?: string | null
+          product_id?: string | null
+          quantity: number
+          return_id: string
+          unit_price: number
+        }
+        Update: {
+          business_id?: string
+          description?: string
+          id?: string
+          line_total?: number
+          order_line_id?: string | null
+          product_id?: string | null
+          quantity?: number
+          return_id?: string
+          unit_price?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sale_return_lines_product_id_business_id_fkey"
+            columns: ["product_id", "business_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id", "business_id"]
+          },
+          {
+            foreignKeyName: "sale_return_lines_return_id_business_id_fkey"
+            columns: ["return_id", "business_id"]
+            isOneToOne: false
+            referencedRelation: "sale_returns"
+            referencedColumns: ["id", "business_id"]
+          },
+        ]
+      }
+      sale_returns: {
+        Row: {
+          amount: number
+          bill_id: string
+          business_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          method: string
+          number: string
+          order_id: string
+        }
+        Insert: {
+          amount: number
+          bill_id: string
+          business_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          method: string
+          number: string
+          order_id: string
+        }
+        Update: {
+          amount?: number
+          bill_id?: string
+          business_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          method?: string
+          number?: string
+          order_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sale_returns_bill_id_business_id_fkey"
+            columns: ["bill_id", "business_id"]
+            isOneToOne: false
+            referencedRelation: "bills"
+            referencedColumns: ["id", "business_id"]
+          },
+          {
+            foreignKeyName: "sale_returns_business_id_fkey"
+            columns: ["business_id"]
+            isOneToOne: false
+            referencedRelation: "businesses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sale_returns_order_id_business_id_fkey"
+            columns: ["order_id", "business_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id", "business_id"]
           },
         ]
       }
@@ -2573,10 +2769,7 @@ export type Database = {
     }
     Functions: {
       accept_quotation: {
-        Args: {
-          p_business_id: string
-          p_quotation_id: string
-        }
+        Args: { p_business_id: string; p_quotation_id: string }
         Returns: Json
       }
       close_register_session: {
@@ -2599,58 +2792,6 @@ export type Database = {
           p_notes?: string
           p_register_id: string
           p_tendered?: number
-        }
-        Returns: Json
-      }
-      discard_pos_draft: {
-        Args: {
-          p_business_id: string
-          p_order_id: string
-        }
-        Returns: undefined
-      }
-      hold_pos_cart: {
-        Args: {
-          p_business_id: string
-          p_customer_id?: string
-          p_discount?: number
-          p_lines: Json
-          p_notes?: string
-          p_register_id: string
-        }
-        Returns: Json
-      }
-      return_pos_sale: {
-        Args: {
-          p_bill_id: string
-          p_business_id: string
-          p_lines: Json
-        }
-        Returns: Json
-      }
-      save_pos_draft: {
-        Args: {
-          p_business_id: string
-          p_customer_id?: string
-          p_discount?: number
-          p_lines?: Json
-          p_notes?: string
-          p_order_id?: string
-          p_register_id: string
-        }
-        Returns: Json
-      }
-      take_pos_hold: {
-        Args: {
-          p_business_id: string
-          p_register_id: string
-        }
-        Returns: Json
-      }
-      void_pos_sale: {
-        Args: {
-          p_business_id: string
-          p_order_id: string
         }
         Returns: Json
       }
@@ -2687,7 +2828,26 @@ export type Database = {
         Args: { p_shipment_id: string }
         Returns: undefined
       }
+      discard_pos_draft: {
+        Args: { p_business_id: string; p_order_id: string }
+        Returns: undefined
+      }
       duplicate_shipment: { Args: { p_shipment_id: string }; Returns: string }
+      force_close_register_session: {
+        Args: { p_business_id: string; p_session_id: string }
+        Returns: Json
+      }
+      hold_pos_cart: {
+        Args: {
+          p_business_id: string
+          p_customer_id?: string
+          p_discount?: number
+          p_lines: Json
+          p_notes?: string
+          p_register_id: string
+        }
+        Returns: Json
+      }
       open_register_session: {
         Args: {
           p_business_id: string
@@ -2700,6 +2860,22 @@ export type Database = {
       receive_shipment: {
         Args: { p_lines?: Json; p_shipment_id: string }
         Returns: undefined
+      }
+      return_pos_sale: {
+        Args: { p_bill_id: string; p_business_id: string; p_lines: Json }
+        Returns: Json
+      }
+      save_pos_draft: {
+        Args: {
+          p_business_id: string
+          p_customer_id?: string
+          p_discount?: number
+          p_lines?: Json
+          p_notes?: string
+          p_order_id?: string
+          p_register_id: string
+        }
+        Returns: Json
       }
       save_shipment_actuals: {
         Args: {
@@ -2743,6 +2919,14 @@ export type Database = {
       set_shipment_status: {
         Args: { p_note?: string; p_shipment_id: string; p_status: string }
         Returns: undefined
+      }
+      take_pos_hold: {
+        Args: { p_business_id: string; p_register_id: string }
+        Returns: Json
+      }
+      void_pos_sale: {
+        Args: { p_business_id: string; p_order_id: string }
+        Returns: Json
       }
     }
     Enums: {

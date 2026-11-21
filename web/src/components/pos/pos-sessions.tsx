@@ -107,7 +107,7 @@ function personLabel(people: Map<string, Person>, id: string | null) {
   if (!id) return "—"
   const person = people.get(id)
   if (!person) return "—"
-  return person.email || person.display_name || "—"
+  return person.display_name?.trim() || person.email || "—"
 }
 
 export function PosSessions({ businessKey }: { businessKey: string }) {

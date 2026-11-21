@@ -14,11 +14,18 @@ export type IslandReceipt = {
   change: number | null
 }
 
+export type IslandConfirm = {
+  label: string
+  destructive?: boolean
+  run: () => void
+}
+
 export type IslandToast = {
   id: number
   message: string
   tone: "success" | "error" | "info"
   receipt?: IslandReceipt
+  confirm?: IslandConfirm
 }
 
 type IslandState = {
@@ -80,6 +87,30 @@ export function pushIslandToast(message: string, tone: IslandToast["tone"]) {
 
 export function pushIslandReceipt(receipt: IslandReceipt) {
   show("Completed", "success", receipt, 6000)
+}
+
+export function pushIslandConfirm(
+  message: string,
+  run: () => void,
+  options?: { label?: string; destructive?: boolean },
+) {
+  window.clearTimeout(islandState.timer)
+  islandState.held = true
+  islandState.sequence += 1
+  islandState.current = {
+    id: islandState.sequence,
+    message,
+    tone: "info",
+    confirm: { label: options?.label ?? "Confirm", destructive: options?.destructive, run },
+  }
+  emit()
+}
+
+export function dismissIsland() {
+  window.clearTimeout(islandState.timer)
+  islandState.held = false
+  islandState.current = null
+  emit()
 }
 
 export function useIslandToast() {

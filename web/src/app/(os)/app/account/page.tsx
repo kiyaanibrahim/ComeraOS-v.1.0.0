@@ -52,7 +52,7 @@ async function AccountContent() {
       .eq("id", user.id)
       .maybeSingle()
     email = profile?.email || user.email || ""
-    name = profile?.display_name || email || "Account"
+    name = profile?.display_name?.trim() || email || "Account"
   }
 
   return (

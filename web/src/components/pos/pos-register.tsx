@@ -418,7 +418,7 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
                 <>
                   No register yet.{" "}
                   <Link href={`/app/${business.slug}/settings/registers`} className="text-foreground underline">
-                    Add one in Organization settings.
+                    Add one in Business settings.
                   </Link>
                 </>
               ) : (

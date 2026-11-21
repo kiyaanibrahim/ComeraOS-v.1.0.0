@@ -22,7 +22,8 @@ const nextConfig: NextConfig = {
       "financials/expenses",
       "financials/capital",
       "financials/accounting",
-      "financials/reporting",
+      "reporting",
+      "analytics",
     ]
     const toConstellation = [
       "/app/portfolio",
@@ -86,6 +87,8 @@ const nextConfig: NextConfig = {
       { source: "/app/:businessId/pos/payments", destination: "/app/:businessId/payments", permanent: false },
       { source: "/app/:businessId/orders/drafts", destination: "/app/:businessId/orders", permanent: false },
       { source: "/app/:businessId/bills", destination: "/app/:businessId/pos/bills", permanent: false },
+      { source: "/app/:businessId/financials/reporting", destination: "/app/:businessId/reporting", permanent: false },
+      { source: "/app/financials/reporting", destination: `${demo}/reporting`, permanent: false },
     ]
   },
   cacheComponents: true,

@@ -24,7 +24,7 @@ type IslandContextValue = {
 
 const IslandContext = createContext<IslandContextValue | null>(null)
 
-const SHELL_SPRING = { type: "spring", duration: 0.8, bounce: 0.2 } as const
+export const SHELL_SPRING = { type: "spring", duration: 0.8, bounce: 0.2 } as const
 const CONTENT_SPRING = { type: "spring", duration: 0.8, bounce: 0.35 } as const
 const EASE_OUT = [0.23, 1, 0.32, 1] as const
 const PILL_WIDTH = 126
@@ -57,24 +57,27 @@ function Slot({
   keyId,
   children,
   className,
+  stable = false,
 }: {
   keyId: string
   children: ReactNode
   className?: string
+  stable?: boolean
 }) {
   const reduce = useReducedMotion()
+  const still = stable || reduce
   return (
     <motion.div
       key={keyId}
-      initial={reduce ? { opacity: 0, filter: "blur(0px)" } : { opacity: 0, scale: 0.9, y: -8, filter: "blur(5px)" }}
-      animate={reduce ? { opacity: 1, filter: "blur(0px)" } : { opacity: 1, scale: 1, y: 0, filter: "blur(0px)" }}
+      initial={still ? { opacity: 0, filter: "blur(0px)" } : { opacity: 0, scale: 0.9, filter: "blur(5px)" }}
+      animate={still ? { opacity: 1, filter: "blur(0px)" } : { opacity: 1, scale: 1, filter: "blur(0px)" }}
       exit={
-        reduce
+        still
           ? { opacity: 0, filter: "blur(0px)", transition: { duration: 0.1 } }
-          : { opacity: 0, scale: 0.9, y: -6, filter: "blur(0px)", transition: { duration: 0.08, ease: EASE_OUT } }
+          : { opacity: 0, scale: 0.9, filter: "blur(0px)", transition: { duration: 0.08, ease: EASE_OUT } }
       }
-      transition={reduce ? { duration: 0.15 } : CONTENT_SPRING}
-      style={{ transformOrigin: "top center" }}
+      transition={still ? { duration: 0.15 } : CONTENT_SPRING}
+      style={{ transformOrigin: "center" }}
       className={cn("flex items-center justify-center", className)}
     >
       {children}
@@ -98,7 +101,7 @@ export function DynamicIsland({
   const [sizerRef, size] = useContentSize()
   const contextValue = useMemo(() => ({ view }), [view])
   const pill = size ? Math.min(size.width, size.height) / 2 : PILL_HEIGHT / 2
-  const radius = view === "receipt" ? "var(--radius-xl)" : pill
+  const radius = view === "receipt" || view === "confirm" ? "var(--radius-xl)" : pill
 
   return (
     <IslandContext.Provider value={contextValue}>
@@ -113,14 +116,14 @@ export function DynamicIsland({
         }
         transition={reduce ? { duration: 0 } : SHELL_SPRING}
         className={cn(
-          "relative inline-flex items-start justify-center overflow-hidden bg-card text-card-foreground shadow-sm ring-1 ring-foreground/10",
+          "relative inline-flex items-center justify-center overflow-hidden bg-card text-card-foreground shadow-sm ring-1 ring-foreground/10",
           className,
         )}
       >
         <div ref={sizerRef} className="w-max">
           <AnimatePresence mode="popLayout" initial={false}>
             {!expanded && compact ? (
-              <Slot key="compact" keyId="compact">
+              <Slot key="compact" keyId="compact" stable>
                 {compact}
               </Slot>
             ) : null}

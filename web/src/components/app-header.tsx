@@ -5,8 +5,9 @@ import { Suspense } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { SearchIcon } from "lucide-react"
+import { motion, useReducedMotion } from "motion/react"
 
-import { DynamicIsland, DynamicIslandView } from "@/components/motion/dynamic-island"
+import { DynamicIsland, DynamicIslandView, SHELL_SPRING } from "@/components/motion/dynamic-island"
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -19,7 +20,18 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import { ThemeToggle } from "@/components/theme-toggle"
-import { holdIsland, useIslandToast } from "@/lib/island-toast"
+import { dismissIsland, holdIsland, useIslandToast, type IslandToast } from "@/lib/island-toast"
+
+function toastClass(notice: IslandToast | null) {
+  const message = notice?.message ?? ""
+  const short = message.trim().split(/\s+/).filter(Boolean).length <= 2
+  const red = notice?.tone === "error" || message.toLowerCase().includes("deleted")
+  return [
+    "text-center text-sm",
+    short ? "whitespace-nowrap" : "",
+    red ? "text-red-400" : "text-foreground",
+  ].join(" ")
+}
 import { money } from "@/lib/flow/format"
 import { isNavActive, matchModule, matchNav, navForShell } from "@/lib/nav"
 import { resolveShell } from "@/lib/shell"
@@ -100,8 +112,11 @@ export function AppHeader() {
   const notice = useIslandToast()
   const home = shell.businessId ? `/app/${shell.businessId}` : "/app"
   const [hover, setHover] = React.useState(false)
+  const [open, setOpen] = React.useState(false)
   const [query, setQuery] = React.useState("")
   const searchRef = React.useRef<HTMLInputElement>(null)
+  const hoverRef = React.useRef(false)
+  const focusSearch = React.useRef(false)
   const [businesses, setBusinesses] = React.useState<{ name: string; slug: string }[]>([])
   const links = destinations(pathname)
   const needle = query.trim().toLowerCase()
@@ -123,7 +138,20 @@ export function AppHeader() {
   ]
   const [active, setActive] = React.useState(0)
   const receipt = notice?.receipt
-  const view = receipt ? "receipt" : notice ? "toast" : "search"
+  const confirm = notice?.confirm
+  const islandRef = React.useRef<HTMLDivElement>(null)
+  const view = confirm ? "confirm" : receipt ? "receipt" : notice ? "toast" : hover || open ? "search" : null
+
+  React.useEffect(() => {
+    if (!confirm) return
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target
+      if (!(target instanceof Node) || islandRef.current?.contains(target)) return
+      dismissIsland()
+    }
+    document.addEventListener("pointerdown", onPointerDown)
+    return () => document.removeEventListener("pointerdown", onPointerDown)
+  }, [confirm, notice?.id])
 
   React.useEffect(() => {
     if (receipt && hover) holdIsland(true)
@@ -142,9 +170,12 @@ export function AppHeader() {
     function onKey(event: KeyboardEvent) {
       if (event.repeat || event.altKey || event.shiftKey) return
       if (event.key.toLowerCase() !== "k" || !(event.metaKey || event.ctrlKey)) return
+      event.preventDefault()
+      focusSearch.current = true
+      setOpen(true)
       const input = searchRef.current
       if (!input) return
-      event.preventDefault()
+      focusSearch.current = false
       input.focus()
       input.select()
     }
@@ -152,7 +183,20 @@ export function AppHeader() {
     return () => window.removeEventListener("keydown", onKey)
   }, [])
 
+  React.useEffect(() => {
+    if (view !== "search" || !focusSearch.current) return
+    focusSearch.current = false
+    const input = searchRef.current
+    if (!input) return
+    input.focus()
+    input.select()
+  }, [view])
+
   function onSearchKey(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Escape" && query === "") {
+      setOpen(false)
+      return
+    }
     if (hits.length === 0) {
       if (event.key === "Escape") setQuery("")
       return
@@ -175,36 +219,92 @@ export function AppHeader() {
   function go(href: string) {
     setQuery("")
     setHover(false)
+    setOpen(false)
+    hoverRef.current = false
     router.push(href)
   }
 
+  const reduceMotion = useReducedMotion()
+  const headerRef = React.useRef<HTMLElement>(null)
+  const [floating, setFloating] = React.useState(false)
+  const [barHeight, setBarHeight] = React.useState(48)
+
+  React.useEffect(() => {
+    const update = () => {
+      const scrolling = document.scrollingElement
+      const header = headerRef.current
+      if (!scrolling || !header) return
+      setBarHeight(header.clientHeight)
+      const canScroll = scrolling.scrollHeight > scrolling.clientHeight + 1
+      setFloating(canScroll && scrolling.scrollTop > 8)
+    }
+    update()
+    window.addEventListener("scroll", update, { passive: true })
+    window.addEventListener("resize", update)
+    const observer = new ResizeObserver(update)
+    observer.observe(document.body)
+    if (headerRef.current) observer.observe(headerRef.current)
+    return () => {
+      window.removeEventListener("scroll", update)
+      window.removeEventListener("resize", update)
+      observer.disconnect()
+    }
+  }, [])
+
   return (
-    <header className="relative flex h-16 shrink-0 items-center justify-between gap-2 overflow-visible group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
-      <div className="flex min-w-0 items-center gap-2 px-4">
-        <SidebarTrigger className="-ml-1" />
+    <header ref={headerRef} className="pointer-events-none sticky top-0 z-30 h-12 overflow-visible">
+      <motion.div
+        initial={false}
+        animate={
+          floating
+            ? { left: 12, right: 12, top: 8, height: barHeight, borderRadius: 16 }
+            : { left: 0, right: 0, top: 0, height: barHeight, borderRadius: 0 }
+        }
+        transition={
+          reduceMotion
+            ? { duration: 0 }
+            : floating
+              ? SHELL_SPRING
+              : { type: "spring", duration: 0.22, bounce: 0 }
+        }
+        className="pointer-events-auto absolute bg-background/60 ring-1 ring-foreground/10 backdrop-blur-xl"
+      >
+      <div className="absolute inset-y-0 left-0 z-10 flex items-center gap-2 px-4">
+        <SidebarTrigger className="-ml-1 transition-none!" />
         <Separator orientation="vertical" className="mr-2 data-vertical:h-4 data-vertical:self-auto" />
         <Suspense fallback={<div className="h-4 w-28 rounded bg-muted" />}>
           <HeaderBreadcrumb />
         </Suspense>
       </div>
-
-      <div className="pointer-events-none absolute inset-x-0 top-2 z-40 flex justify-center">
+      <div className="absolute inset-y-0 right-0 z-10 flex items-center gap-1 px-4">
+        {shell.businessId ? (
+          <Button variant="ghost" size="sm" className="h-8 transition-none!" render={<Link href={`/app/${shell.businessId}/help`} />}>
+            Help
+          </Button>
+        ) : null}
+        <ThemeToggle className="transition-none!" />
+      </div>
+      <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center">
         <div
+          ref={islandRef}
           className="pointer-events-auto relative"
           onMouseEnter={() => {
+            hoverRef.current = true
             setHover(true)
             if (notice?.receipt) holdIsland(true)
           }}
           onMouseLeave={() => {
+            hoverRef.current = false
             setHover(false)
             holdIsland(false)
+            if (document.activeElement !== searchRef.current) setOpen(false)
           }}
         >
           <DynamicIsland
             view={view}
             compact={
               <Link href={home} className="flex size-8 items-center justify-center text-foreground" aria-label="Comera">
-                <Mark className="size-6" />
+                <Mark className="size-5" />
               </Link>
             }
           >
@@ -217,20 +317,35 @@ export function AppHeader() {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={onSearchKey}
+                onBlur={() => {
+                  if (!hoverRef.current) setOpen(false)
+                }}
                 placeholder="Search"
                 aria-label="Search"
                 role="combobox"
                 aria-expanded={hits.length > 0}
                 aria-controls="island-search-results"
                 aria-activedescendant={hits[active] ? `island-hit-${active}` : undefined}
-                className="h-full w-full bg-transparent px-10 text-center text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                className="h-full w-full bg-transparent px-10 text-left text-sm text-foreground outline-none placeholder:text-center placeholder:text-muted-foreground"
               />
               <SearchIcon className="pointer-events-none absolute right-3.5 size-4 text-muted-foreground" />
             </DynamicIslandView>
+            <DynamicIslandView id="confirm" className="w-72 flex-col items-stretch gap-3 px-3.5 py-3">
+              <p className="text-center text-sm">{notice?.message}</p>
+              <Button
+                type="button"
+                variant={notice?.confirm?.destructive ? "destructive" : "default"}
+                onClick={() => {
+                  const run = notice?.confirm?.run
+                  dismissIsland()
+                  run?.()
+                }}
+              >
+                {notice?.confirm?.label ?? "Confirm"}
+              </Button>
+            </DynamicIslandView>
             <DynamicIslandView id="toast" className="px-4 py-2">
-              <span className={notice?.tone === "error" ? "text-sm text-red-400" : "text-sm text-emerald-400"}>
-                {notice?.message}
-              </span>
+              <span className={toastClass(notice)}>{notice?.message}</span>
             </DynamicIslandView>
             <DynamicIslandView id="receipt" className="w-72 flex-col items-stretch p-0">
               {receipt ? (
@@ -297,7 +412,7 @@ export function AppHeader() {
               ) : null}
             </DynamicIslandView>
           </DynamicIsland>
-          {!notice && hits.length > 0 ? (
+          {!notice && view === "search" && hits.length > 0 ? (
             <div id="island-search-results" role="listbox" className="absolute top-full left-1/2 z-50 mt-2 w-72 -translate-x-1/2 rounded-xl border bg-popover p-1 text-popover-foreground shadow-md">
               {hits.map((hit, index) => (
                 <button
@@ -318,15 +433,7 @@ export function AppHeader() {
           ) : null}
         </div>
       </div>
-
-      <div className="flex items-center gap-1 px-4">
-        {shell.businessId ? (
-          <Button variant="ghost" size="sm" className="h-8" render={<Link href={`/app/${shell.businessId}/help`} />}>
-            Help
-          </Button>
-        ) : null}
-        <ThemeToggle />
-      </div>
+      </motion.div>
     </header>
   )
 }

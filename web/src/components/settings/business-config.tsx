@@ -107,7 +107,7 @@ export function BusinessConfig({ businessKey }: { businessKey: string }) {
     const [businessRow, settingsRow] = await Promise.all([
       supabase
         .from("businesses")
-        .select("name, currency, locale, timezone")
+        .select("name, currency, locale, timezone, organizations(name)")
         .eq("id", business.id)
         .maybeSingle(),
       supabase
@@ -120,12 +120,14 @@ export function BusinessConfig({ businessKey }: { businessKey: string }) {
       toast.error(businessRow.error?.message ?? settingsRow.error?.message ?? "Couldn't load settings.")
       return
     }
+    const organization = businessRow.data?.organizations
+    const organizationName = organization && !Array.isArray(organization) ? organization.name : ""
     const next = {
       name: businessRow.data?.name ?? "",
       currency: businessRow.data?.currency || "USD",
       locale: businessRow.data?.locale || "en-US",
       timezone: businessRow.data?.timezone || "Asia/Karachi",
-      legalName: settingsRow.data?.legal_name ?? "",
+      legalName: organizationName || settingsRow.data?.legal_name || "",
       taxId: settingsRow.data?.tax_id ?? "",
       taxRate: String(settingsRow.data?.tax_rate ?? 0),
       invoicePrefix: settingsRow.data?.invoice_prefix ?? "",
@@ -170,7 +172,6 @@ export function BusinessConfig({ businessKey }: { businessKey: string }) {
     const settingsResult = await supabase
       .from("business_settings")
       .update({
-        legal_name: legalName.trim() || null,
         tax_id: taxId.trim() || null,
         tax_rate: rate,
         invoice_prefix: invoicePrefix.trim() || "INV",
@@ -216,8 +217,11 @@ export function BusinessConfig({ businessKey }: { businessKey: string }) {
               <Input id="business-name" value={name} onValueChange={setName} />
             </Field>
             <Field>
-              <FieldLabel htmlFor="legal-name">Legal name</FieldLabel>
-              <Input id="legal-name" value={legalName} onValueChange={setLegalName} />
+              <FieldLabel htmlFor="legal-name">Organization</FieldLabel>
+              <Input id="legal-name" value={legalName} readOnly />
+              <p className="text-sm text-muted-foreground">
+                The incorporated name. Rename it from the business portfolio.
+              </p>
             </Field>
             <Field>
               <FieldLabel htmlFor="tax-id">Tax ID</FieldLabel>

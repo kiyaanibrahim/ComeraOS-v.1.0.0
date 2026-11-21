@@ -18,7 +18,7 @@ async function BusinessesContent() {
           Business portfolio
         </h1>
         <p className="text-sm text-muted-foreground">
-          Every business you own, in one view. Open a card to enter that business.
+          Every organization you own. Open a business on its card to enter that business.
         </p>
       </div>
 
