@@ -1,13 +1,21 @@
 "use client"
 
 import { useCallback, useEffect, useId, useState } from "react"
-import { Building2Icon, Trash2Icon } from "lucide-react"
+import { Building2Icon, MoreHorizontal } from "lucide-react"
 import Link from "next/link"
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, XAxis, YAxis } from "recharts"
+import { useRouter } from "next/navigation"
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from "recharts"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
@@ -36,7 +44,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { toast } from "@/components/ui/sonner"
-import { formatMoney } from "@/lib/businesses"
+import { formatMoney, slugFromName } from "@/lib/businesses"
 import { pushIslandConfirm, pushIslandToast } from "@/lib/island-toast"
 import { createClient } from "@/lib/supabase/client"
 
@@ -44,13 +52,6 @@ type BusinessRow = {
   id: string
   name: string
   slug: string
-  stores: number
-  warehouses: number
-  registers: number
-  openRegisters: number
-  sales: number
-  openOrders: number
-  staff: number
 }
 
 type OrganizationCard = {
@@ -65,44 +66,15 @@ type Place = {
   business_id: string
   name: string
   kind: string
-  fulfillment_warehouse_id: string | null
+  is_active: boolean
 }
 
 function countLabel(count: number, singular: string, plural: string) {
   return `${count} ${count === 1 ? singular : plural}`
 }
 
-function registerDetail(business: BusinessRow) {
-  if (business.registers === 0) return "None yet"
-  if (business.openRegisters === 0) return "None open"
-  return countLabel(business.openRegisters, "open", "open")
-}
-
-function registerTone(business: BusinessRow) {
-  if (business.registers === 0) return "text-muted-foreground"
-  if (business.openRegisters === 0) return "text-amber-400"
-  return "text-positive"
-}
-
-function PlaceCards({ business }: { business: BusinessRow }) {
-  const cards = [
-    { label: "Locations", value: business.stores, detail: "", tone: "text-muted-foreground" },
-    { label: "Warehouses", value: business.warehouses, detail: "", tone: "text-muted-foreground" },
-    { label: "Registers", value: business.registers, detail: registerDetail(business), tone: registerTone(business) },
-  ]
-  return (
-    <div className="grid grid-cols-3 items-stretch gap-2">
-      {cards.map((card) => (
-        <Card key={card.label} size="sm" className="h-full">
-          <CardHeader>
-            <CardDescription>{card.label}</CardDescription>
-            <CardTitle>{card.value}</CardTitle>
-          </CardHeader>
-          <CardContent className={`min-h-4 text-xs ${card.tone}`}>{card.detail}</CardContent>
-        </Card>
-      ))}
-    </div>
-  )
+function sellingPlaces(places: Place[], businessId: string) {
+  return places.filter((place) => place.business_id === businessId && (place.kind === "store" || place.kind === "site"))
 }
 
 type CompletedSale = {
@@ -116,11 +88,11 @@ type CompletedSale = {
 
 type Period = "today" | "week" | "month"
 
-const salesChartConfig = {
+const sliceColors = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"]
+
+const compareChartConfig = {
   sales: { label: "Sales", color: "var(--chart-1)" },
 } satisfies ChartConfig
-
-const sliceColors = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"]
 
 function MetricSpark({ values, color }: { values: number[]; color: string }) {
   const config = { value: { label: "Value", color } } satisfies ChartConfig
@@ -247,18 +219,96 @@ function greeting(displayName: string) {
   return name ? `${hello}, ${name}` : hello
 }
 
+function locationSpark(sales: CompletedSale[], locationId: string, period: Period) {
+  const days = periodDays(period === "today" ? "week" : period)
+  return days.map((day) =>
+    totalSales(sales.filter((sale) => sale.location_id === locationId && localDayKey(new Date(sale.created_at)) === day.day)),
+  )
+}
+
+function BusinessSnapshot({
+  business,
+  places,
+  sales,
+  period,
+}: {
+  business: BusinessRow
+  places: Place[]
+  sales: CompletedSale[]
+  period: Period
+}) {
+  const locations = sellingPlaces(places, business.id)
+  const windowSales = salesInPeriod(
+    sales.filter((sale) => sale.business_id === business.id),
+    period,
+  )
+  const tiles = [
+    { label: "Sales", value: formatMoney(totalSales(windowSales)) },
+    { label: "Orders", value: String(windowSales.length) },
+    { label: "Customers", value: String(customerCount(windowSales)) },
+  ]
+  return (
+    <li className="flex flex-col gap-3">
+      <div className="min-w-0">
+        <Link href={`/app/${business.slug}`} className="font-medium hover:underline">
+          {business.name}
+        </Link>
+        <p className="text-sm text-muted-foreground">{countLabel(locations.length, "Location", "Locations")}</p>
+      </div>
+      {locations.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No locations yet.</p>
+      ) : (
+        <ul className="flex flex-col">
+          {locations.map((place) => {
+            const placeSales = windowSales.filter((sale) => sale.location_id === place.id)
+            return (
+              <li key={place.id} className="flex items-center justify-between gap-3 border-t py-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-sm font-medium">{place.name}</span>
+                    <Badge variant={place.is_active ? "positive" : "outline"}>{place.is_active ? "Active" : "Inactive"}</Badge>
+                  </div>
+                  <p className="text-sm text-muted-foreground">Sales: {formatMoney(totalSales(placeSales))}</p>
+                </div>
+                <MetricSpark values={locationSpark(sales, place.id, period)} color="var(--chart-1)" />
+              </li>
+            )
+          })}
+        </ul>
+      )}
+      <div className="grid grid-cols-3 gap-2">
+        {tiles.map((tile) => (
+          <Card key={tile.label} size="sm">
+            <CardHeader>
+              <CardDescription>{tile.label}</CardDescription>
+              <CardTitle className="tabular-nums">{tile.value}</CardTitle>
+            </CardHeader>
+          </Card>
+        ))}
+      </div>
+    </li>
+  )
+}
+
 function PortfolioSummary({
   ready,
   displayName,
   organizations,
   sales,
+  places,
+  staffCount,
+  period,
+  onPeriod,
 }: {
   ready: boolean
   displayName: string
   organizations: OrganizationCard[]
   sales: CompletedSale[]
+  places: Place[]
+  staffCount: number
+  period: Period
+  onPeriod: (period: Period) => void
 }) {
-  const [period, setPeriod] = useState<Period>("today")
 
   if (!ready) {
     return (
@@ -276,6 +326,14 @@ function PortfolioSummary({
   }
 
   const empty = organizations.length === 0
+  const businessCount = organizations.reduce((sum, organization) => sum + organization.businesses.length, 0)
+  const locationCount = places.filter((place) => place.kind === "store" || place.kind === "site").length
+  const overview = [
+    { label: "Organizations", value: organizations.length },
+    { label: "Businesses", value: businessCount },
+    { label: "Locations", value: locationCount },
+    { label: "Staff", value: staffCount },
+  ]
   const windowSales = salesInPeriod(sales, period)
   const earlierSales = salesBetween(sales, previousStart(period), periodStart(period))
   const customers = customerCount(windowSales)
@@ -283,19 +341,31 @@ function PortfolioSummary({
   const chartDays = periodDays(period === "today" ? "week" : period)
   const salesOnDay = (day: string) => sales.filter((sale) => localDayKey(new Date(sale.created_at)) === day)
   const daily = (pick: (rows: CompletedSale[]) => number) => chartDays.map((day) => pick(salesOnDay(day.day)))
-  const distribution = organizations
-    .map((organization, index) => {
-      const ids = new Set(organization.businesses.map((business) => business.id))
-      return {
-        key: organization.id,
-        name: organization.name,
-        sales: windowSales.reduce((sum, sale) => (ids.has(sale.business_id) ? sum + Number(sale.total) : sum), 0),
-        fill: sliceColors[index % sliceColors.length],
-      }
-    })
-    .filter((row) => row.sales > 0)
+  const companies = organizations.map((organization, index) => ({
+    key: `c${index}`,
+    name: organization.name,
+    fill: sliceColors[index % sliceColors.length],
+    ids: new Set(organization.businesses.map((business) => business.id)),
+  }))
+  const companyConfig = Object.fromEntries(
+    companies.map((company) => [company.key, { label: company.name, color: company.fill }]),
+  ) satisfies ChartConfig
+  const chartDaySet = new Set(chartDays.map((day) => day.day))
+  const chartSales = sales.filter((sale) => chartDaySet.has(localDayKey(new Date(sale.created_at))))
+  const companyTotal = (rows: CompletedSale[], ids: Set<string>) =>
+    rows.reduce((sum, sale) => (ids.has(sale.business_id) ? sum + Number(sale.total) : sum), 0)
+  const comparison = companies
+    .map((company) => ({ ...company, sales: companyTotal(chartSales, company.ids) }))
+    .filter((company) => company.sales > 0)
     .sort((left, right) => right.sales - left.sales)
-  const bars = chartDays.map((day) => ({ label: day.label, sales: totalSales(salesOnDay(day.day)) }))
+  const stacked = comparison.length === 0 ? [] : comparison
+  const bars = chartDays.map((day) => {
+    const daySales = salesOnDay(day.day)
+    const row: Record<string, string | number> = { label: day.label }
+    for (const company of stacked) row[company.key] = companyTotal(daySales, company.ids)
+    return row
+  })
+  const chartSpan = period === "today" ? "The last 7 days, every company you own." : "Each day in this period, every company you own."
   const metrics = [
     {
       label: "Sales",
@@ -329,30 +399,38 @@ function PortfolioSummary({
 
   return (
     <section className="flex flex-col gap-4">
-      <Card>
-        <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex flex-col gap-1">
-            <CardTitle>{greeting(displayName)}</CardTitle>
-            <CardDescription>
-              {empty ? "There is nothing to report yet." : "Here's how your companies are doing."}
-            </CardDescription>
-          </div>
-          {empty ? null : (
-            <Tabs
-              value={period}
-              onValueChange={(value) => {
-                if (value === "today" || value === "week" || value === "month") setPeriod(value)
-              }}
-            >
-              <TabsList>
-                <TabsTrigger value="today">Today</TabsTrigger>
-                <TabsTrigger value="week">Week</TabsTrigger>
-                <TabsTrigger value="month">Month</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          )}
-        </CardHeader>
-      </Card>
+      <div className="flex flex-col gap-4 py-8 sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex flex-col gap-1">
+          <h1 className="font-heading text-4xl font-medium tracking-tight">{greeting(displayName)}</h1>
+          <p className="text-sm text-muted-foreground">
+            {empty ? "There is nothing to report yet." : "Here's how your companies are doing."}
+          </p>
+        </div>
+        {empty ? null : (
+          <Tabs
+            value={period}
+            onValueChange={(value) => {
+              if (value === "today" || value === "week" || value === "month") onPeriod(value)
+            }}
+          >
+            <TabsList>
+              <TabsTrigger value="today">Today</TabsTrigger>
+              <TabsTrigger value="week">Week</TabsTrigger>
+              <TabsTrigger value="month">Month</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        )}
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {overview.map((item) => (
+          <Card key={item.label}>
+            <CardHeader>
+              <CardDescription>{item.label}</CardDescription>
+              <CardTitle className="text-2xl tabular-nums">{item.value}</CardTitle>
+            </CardHeader>
+          </Card>
+        ))}
+      </div>
       {empty ? null : (
         <>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -373,60 +451,68 @@ function PortfolioSummary({
             <Card className="lg:col-span-2">
               <CardHeader>
                 <CardTitle>Sales</CardTitle>
-                <CardDescription>
-                  {period === "today" ? "The last 7 days." : "Each day in this period."}
-                </CardDescription>
+                <CardDescription>{chartSpan}</CardDescription>
               </CardHeader>
               <CardContent>
-                <ChartContainer config={salesChartConfig} className="aspect-auto h-44 w-full">
-                  <BarChart data={bars} margin={{ left: 8, right: 8, top: 8 }} barCategoryGap="28%">
-                    <CartesianGrid vertical={false} />
-                    <XAxis
-                      dataKey="label"
-                      tickLine={false}
-                      axisLine={false}
-                      tickMargin={8}
-                      minTickGap={24}
-                      interval="equidistantPreserveStart"
-                    />
-                    <ChartTooltip content={<ChartTooltipContent formatter={(value) => formatMoney(Number(value))} />} />
-                    <Bar dataKey="sales" fill="var(--color-sales)" radius={4} />
-                  </BarChart>
-                </ChartContainer>
+                {stacked.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No completed sales in this period.</p>
+                ) : (
+                  <ChartContainer config={companyConfig} className="aspect-auto h-56 w-full">
+                    <BarChart data={bars} margin={{ left: 8, right: 8, top: 8 }} barCategoryGap="28%">
+                      <CartesianGrid vertical={false} />
+                      <XAxis
+                        dataKey="label"
+                        tickLine={false}
+                        axisLine={false}
+                        tickMargin={8}
+                        minTickGap={24}
+                        interval="equidistantPreserveStart"
+                      />
+                      <ChartTooltip content={<ChartTooltipContent formatter={(value) => formatMoney(Number(value))} />} />
+                      <ChartLegend content={<ChartLegendContent />} />
+                      {stacked.map((company, index) => (
+                        <Bar
+                          key={company.key}
+                          dataKey={company.key}
+                          stackId="sales"
+                          fill={`var(--color-${company.key})`}
+                          radius={index === stacked.length - 1 ? [4, 4, 0, 0] : 0}
+                        />
+                      ))}
+                    </BarChart>
+                  </ChartContainer>
+                )}
               </CardContent>
             </Card>
             <Card>
               <CardHeader>
-                <CardTitle>Distribution</CardTitle>
-                <CardDescription>Completed sales by organization.</CardDescription>
+                <CardTitle>By company</CardTitle>
+                <CardDescription>Completed sales for each organization.</CardDescription>
               </CardHeader>
               <CardContent>
-                {distribution.length === 0 ? (
+                {comparison.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No completed sales in this period.</p>
                 ) : (
-                  <div className="flex flex-col gap-4">
-                    <ChartContainer config={salesChartConfig} className="mx-auto aspect-square h-44">
-                      <PieChart>
-                        <ChartTooltip content={<ChartTooltipContent hideLabel formatter={(value) => formatMoney(Number(value))} />} />
-                        <Pie data={distribution} dataKey="sales" nameKey="name" innerRadius={52} outerRadius={72} paddingAngle={2} strokeWidth={0}>
-                          {distribution.map((slice) => (
-                            <Cell key={slice.key} fill={slice.fill} />
-                          ))}
-                        </Pie>
-                      </PieChart>
-                    </ChartContainer>
-                    <ul className="flex flex-col gap-2">
-                      {distribution.map((slice) => (
-                        <li key={slice.key} className="flex items-center justify-between gap-3 text-sm">
-                          <span className="flex min-w-0 items-center gap-2">
-                            <span className="size-2 shrink-0 rounded-full" style={{ background: slice.fill }} />
-                            <span className="truncate">{slice.name}</span>
-                          </span>
-                          <span className="shrink-0 tabular-nums">{formatMoney(slice.sales)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
+                  <ChartContainer config={compareChartConfig} className="aspect-auto w-full" style={{ height: Math.max(160, comparison.length * 40) }}>
+                    <BarChart data={comparison} layout="vertical" margin={{ left: 8, right: 16 }}>
+                      <XAxis type="number" hide />
+                      <YAxis
+                        type="category"
+                        dataKey="name"
+                        width={112}
+                        tickLine={false}
+                        axisLine={false}
+                        tickMargin={8}
+                        tickFormatter={(value) => (String(value).length > 16 ? `${String(value).slice(0, 15)}…` : String(value))}
+                      />
+                      <ChartTooltip content={<ChartTooltipContent hideLabel formatter={(value) => formatMoney(Number(value))} />} />
+                      <Bar dataKey="sales" radius={4}>
+                        {comparison.map((company) => (
+                          <Cell key={company.key} fill={company.fill} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ChartContainer>
                 )}
               </CardContent>
             </Card>
@@ -438,15 +524,20 @@ function PortfolioSummary({
 }
 
 export function BusinessPortfolio() {
+  const router = useRouter()
   const [organizations, setOrganizations] = useState<OrganizationCard[]>([])
   const [userId, setUserId] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
+  const [businessFor, setBusinessFor] = useState<OrganizationCard | null>(null)
   const [name, setName] = useState("")
   const [pending, setPending] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [ready, setReady] = useState(false)
   const [displayName, setDisplayName] = useState("")
   const [completedSales, setCompletedSales] = useState<CompletedSale[]>([])
+  const [places, setPlaces] = useState<Place[]>([])
+  const [staffCount, setStaffCount] = useState(0)
+  const [period, setPeriod] = useState<Period>("today")
 
   const load = useCallback(async () => {
     const supabase = createClient()
@@ -464,6 +555,8 @@ export function BusinessPortfolio() {
     if (error || !organizationRows) {
       setOrganizations([])
       setCompletedSales([])
+      setPlaces([])
+      setStaffCount(0)
       setReady(true)
       const text = error?.message ?? "Couldn't load organizations."
       setLoadError(text)
@@ -475,6 +568,8 @@ export function BusinessPortfolio() {
     if (organizationIds.length === 0) {
       setOrganizations([])
       setCompletedSales([])
+      setPlaces([])
+      setStaffCount(0)
       setReady(true)
       return
     }
@@ -492,10 +587,7 @@ export function BusinessPortfolio() {
     const businesses = businessRows ?? []
     const businessIds = businesses.map((row) => row.id)
     const since = previousStart("month").toISOString()
-    const [openOrders, salesOrders, members, locationRows, registerRows, openSessions] = await Promise.all([
-      businessIds.length === 0
-        ? Promise.resolve({ data: [] as { business_id: string }[] })
-        : supabase.from("orders").select("business_id").in("business_id", businessIds).eq("status", "open"),
+    const [salesOrders, locationRows, memberRows] = await Promise.all([
       businessIds.length === 0
         ? Promise.resolve({ data: [] as CompletedSale[] })
         : supabase
@@ -505,57 +597,32 @@ export function BusinessPortfolio() {
             .eq("status", "completed")
             .gte("created_at", since),
       businessIds.length === 0
-        ? Promise.resolve({ data: [] as { business_id: string }[] })
-        : supabase.from("business_members").select("business_id").in("business_id", businessIds),
-      businessIds.length === 0
         ? Promise.resolve({ data: [] as Place[] })
         : supabase
             .from("locations")
-            .select("id, business_id, name, kind, fulfillment_warehouse_id")
-            .in("business_id", businessIds),
-      businessIds.length === 0
-        ? Promise.resolve({ data: [] as { business_id: string }[] })
-        : supabase.from("registers").select("business_id").in("business_id", businessIds),
-      businessIds.length === 0
-        ? Promise.resolve({ data: [] as { business_id: string; register_id: string }[] })
-        : supabase
-            .from("register_sessions")
-            .select("business_id, register_id")
+            .select("id, business_id, name, kind, is_active")
             .in("business_id", businessIds)
-            .eq("status", "open"),
+            .order("name"),
+      businessIds.length === 0
+        ? Promise.resolve({ data: [] as { user_id: string }[] })
+        : supabase.from("business_members").select("user_id, business_id").in("business_id", businessIds),
     ])
-    const today = localDayKey(new Date())
     const salesRows = salesOrders.data ?? []
     const locationList = locationRows.data ?? []
     setCompletedSales(salesRows)
+    setPlaces(locationList)
+    setStaffCount(new Set((memberRows.data ?? []).map((member) => member.user_id)).size)
     const next = organizationRows.map((organization) => {
       const owned = businesses.filter((business) => business.organization_id === organization.id)
       return {
         id: organization.id,
         name: organization.name,
         ownerId: organization.owner_id,
-        businesses: owned.map((business) => {
-          const businessPlaces = locationList.filter((place) => place.business_id === business.id)
-          return {
-            id: business.id,
-            name: business.name,
-            slug: business.slug,
-            stores: businessPlaces.filter((place) => place.kind === "store" || place.kind === "site").length,
-            warehouses: businessPlaces.filter((place) => place.kind === "warehouse").length,
-            registers: (registerRows.data ?? []).filter((row) => row.business_id === business.id).length,
-            openRegisters: new Set(
-              (openSessions.data ?? [])
-                .filter((row) => row.business_id === business.id)
-                .map((row) => row.register_id),
-            ).size,
-            sales: salesRows.reduce((sum, order) => {
-              if (order.business_id !== business.id || localDayKey(new Date(order.created_at)) !== today) return sum
-              return sum + Number(order.total)
-            }, 0),
-            openOrders: (openOrders.data ?? []).filter((order) => order.business_id === business.id).length,
-            staff: (members.data ?? []).filter((member) => member.business_id === business.id).length,
-          }
-        }),
+        businesses: owned.map((business) => ({
+          id: business.id,
+          name: business.name,
+          slug: business.slug,
+        })),
       }
     })
     setOrganizations(next)
@@ -568,6 +635,7 @@ export function BusinessPortfolio() {
 
   function closeDialog() {
     setAdding(false)
+    setBusinessFor(null)
     setName("")
   }
 
@@ -622,26 +690,78 @@ export function BusinessPortfolio() {
       return
     }
     setPending(true)
+    if (businessFor) {
+      const message = await insertBusiness(supabase, user.id, businessFor.id, trimmed)
+      setPending(false)
+      if (message) {
+        toast.error(message)
+        return
+      }
+      closeDialog()
+      toast.success("Business added.")
+      await load()
+      return
+    }
     const { error } = await supabase.from("organizations").insert({ name: trimmed, owner_id: user.id })
-    setPending(false)
     if (error) {
+      setPending(false)
       toast.error(error.message)
+      return
+    }
+    const created = await supabase
+      .from("organizations")
+      .select("id")
+      .eq("owner_id", user.id)
+      .eq("name", trimmed)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    setPending(false)
+    if (created.error || !created.data) {
+      toast.error(created.error?.message ?? "Organization added, but setup could not be opened.")
+      closeDialog()
+      await load()
       return
     }
     closeDialog()
     toast.success("Organization added.")
-    await load()
+    router.push(`/app/setup/${created.data.id}`)
+  }
+
+  async function insertBusiness(
+    supabase: ReturnType<typeof createClient>,
+    ownerId: string,
+    organizationId: string,
+    businessName: string,
+  ) {
+    const base = slugFromName(businessName)
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const slug = attempt === 0 ? base : `${base}-${attempt + 1}`
+      const { error } = await supabase.from("businesses").insert({
+        name: businessName,
+        slug,
+        owner_id: ownerId,
+        organization_id: organizationId,
+      })
+      if (!error) return null
+      if (error.code !== "23505") return error.message
+    }
+    return "That name is already in use."
   }
 
   return (
     <>
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-10">
       {loadError ? <p className="text-sm text-destructive">{loadError}</p> : null}
-      <div className="flex flex-col gap-10">
       <PortfolioSummary
         ready={ready}
         displayName={displayName}
         organizations={organizations}
         sales={completedSales}
+        places={places}
+        staffCount={staffCount}
+        period={period}
+        onPeriod={setPeriod}
       />
       <section className="flex flex-col gap-4">
       <h2 className="font-heading text-lg font-medium tracking-tight">Your organizations</h2>
@@ -653,50 +773,59 @@ export function BusinessPortfolio() {
               <CardHeader>
                 <div className="flex items-start justify-between gap-3">
                   <CardTitle>{organization.name}</CardTitle>
-                  {owns ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={`Delete ${organization.name}`}
-                      onClick={() => askDelete(organization)}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={<Button type="button" variant="ghost" size="icon-sm" aria-label={`${organization.name} actions`} />}
                     >
-                      <Trash2Icon />
-                    </Button>
-                  ) : null}
+                      <MoreHorizontal />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-max! whitespace-nowrap">
+                      <DropdownMenuItem render={<Link href={`/app/setup/${organization.id}`} />}>
+                        Organization setup
+                      </DropdownMenuItem>
+                      {organization.businesses.map((business) => (
+                        <DropdownMenuItem key={business.id} render={<Link href={`/app/${business.slug}/settings`} />}>
+                          {organization.businesses.length === 1 ? "Settings" : `${business.name} settings`}
+                        </DropdownMenuItem>
+                      ))}
+                      {owns ? (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem variant="destructive" onClick={() => askDelete(organization)}>
+                            Delete organization
+                          </DropdownMenuItem>
+                        </>
+                      ) : null}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
               </CardHeader>
-              <CardContent className="flex flex-col gap-4">
+              <CardContent>
                 {organization.businesses.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No businesses yet.</p>
+                  <div className="flex flex-col items-start gap-3">
+                    <p className="text-sm text-muted-foreground">No businesses yet.</p>
+                    {owns ? (
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          setName("")
+                          setBusinessFor(organization)
+                        }}
+                      >
+                        Add business
+                      </Button>
+                    ) : null}
+                  </div>
                 ) : (
-                  <ul className="flex flex-col gap-4">
+                  <ul className="flex flex-col gap-6">
                     {organization.businesses.map((business) => (
-                      <li key={business.id} className="relative flex flex-col gap-2">
-                        <Link
-                          href={`/app/${business.slug}`}
-                          aria-label={business.name}
-                          className="absolute inset-0 z-0 rounded-lg focus-visible:ring-3 focus-visible:ring-ring/50"
-                        />
-                        <span className="pointer-events-none relative z-10 font-medium">{business.name}</span>
-                        <div className="pointer-events-none relative z-10 flex flex-col gap-2">
-                          <PlaceCards business={business} />
-                          <div className="grid grid-cols-3 gap-3">
-                            <div className="flex flex-col gap-1">
-                              <span className="text-xs text-muted-foreground">Sales</span>
-                              <span className="font-medium">{formatMoney(business.sales)}</span>
-                            </div>
-                            <div className="flex flex-col gap-1">
-                              <span className="text-xs text-muted-foreground">Open orders</span>
-                              <span className="font-medium">{business.openOrders}</span>
-                            </div>
-                            <div className="flex flex-col gap-1">
-                              <span className="text-xs text-muted-foreground">Staff</span>
-                              <span className="font-medium">{business.staff}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </li>
+                      <BusinessSnapshot
+                        key={business.id}
+                        business={business}
+                        places={places}
+                        sales={completedSales}
+                        period={period}
+                      />
                     ))}
                   </ul>
                 )}
@@ -734,15 +863,19 @@ export function BusinessPortfolio() {
       </div>
       </section>
       </div>
-      <Dialog open={adding} onOpenChange={(open) => { if (!open) closeDialog() }}>
+      <Dialog open={adding || businessFor !== null} onOpenChange={(open) => { if (!open) closeDialog() }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add an organization</DialogTitle>
-            <DialogDescription>This is the incorporated company. Businesses, locations, and warehouses are managed in Business settings.</DialogDescription>
+            <DialogTitle>{businessFor ? "Add a business" : "Add an organization"}</DialogTitle>
+            <DialogDescription>
+              {businessFor
+                ? `This business operates under ${businessFor.name}. Locations and registers are added in Business settings.`
+                : "This is the incorporated company. Businesses, locations, and warehouses are managed in Business settings."}
+            </DialogDescription>
           </DialogHeader>
           <form className="flex flex-col gap-3" onSubmit={(event) => void submit(event)}>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="portfolio-name">Organization name</Label>
+              <Label htmlFor="portfolio-name">{businessFor ? "Business name" : "Organization name"}</Label>
               <Input id="portfolio-name" value={name} required autoFocus onValueChange={setName} />
             </div>
             <DialogFooter>

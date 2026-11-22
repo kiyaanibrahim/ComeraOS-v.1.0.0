@@ -4,7 +4,7 @@ import * as React from "react"
 import { Suspense } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { SearchIcon } from "lucide-react"
+import { ArrowLeftIcon, BadgeCheckIcon, BellIcon, CheckCheckIcon, LogOutIcon, SearchIcon, SunIcon } from "lucide-react"
 import { motion, useReducedMotion } from "motion/react"
 
 import { DynamicIsland, DynamicIslandView, SHELL_SPRING } from "@/components/motion/dynamic-island"
@@ -16,10 +16,34 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { SidebarTrigger } from "@/components/ui/sidebar"
-import { ThemeToggle } from "@/components/theme-toggle"
+import { Textarea } from "@/components/ui/textarea"
+import { toast } from "@/components/ui/sonner"
 import { dismissIsland, holdIsland, useIslandToast, type IslandToast } from "@/lib/island-toast"
 
 function toastClass(notice: IslandToast | null) {
@@ -32,10 +56,255 @@ function toastClass(notice: IslandToast | null) {
     red ? "text-red-400" : "text-foreground",
   ].join(" ")
 }
+import { useTheme } from "next-themes"
+
 import { money } from "@/lib/flow/format"
 import { isNavActive, matchModule, matchNav, navForShell } from "@/lib/nav"
+import { profileUpdatedEvent } from "@/lib/profile"
 import { resolveShell } from "@/lib/shell"
 import { createClient } from "@/lib/supabase/client"
+
+const outlineControl = "border-border transition-none!"
+
+function initials(name: string) {
+  return name
+    .split(" ")
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase()
+}
+
+function sidebarHidden(pathname: string) {
+  const path = pathname.split("?")[0]?.replace(/\/$/, "") || "/"
+  return path === "/app" || path.startsWith("/app/setup")
+}
+
+function HeaderAccount() {
+  const router = useRouter()
+  const { setTheme } = useTheme()
+  const [user, setUser] = React.useState({ name: "Account", email: "", avatar: "" })
+
+  React.useEffect(() => {
+    const supabase = createClient()
+    let active = true
+    async function load() {
+      const { data } = await supabase.auth.getUser()
+      const current = data.user
+      if (!current || !active) return
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("display_name, email")
+        .eq("id", current.id)
+        .maybeSingle()
+      if (!active) return
+      const email = profile?.email || current.email || ""
+      setUser({ name: profile?.display_name?.trim() || email || "Account", email, avatar: "" })
+    }
+    void load()
+    const refresh = () => void load()
+    window.addEventListener(profileUpdatedEvent, refresh)
+    return () => {
+      active = false
+      window.removeEventListener(profileUpdatedEvent, refresh)
+    }
+  }, [])
+
+  async function signOut() {
+    const supabase = createClient()
+    await supabase.auth.signOut()
+    router.push("/login")
+    router.refresh()
+  }
+
+  const fallback = initials(user.name) || "A"
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button type="button" variant="outline" size="icon" className={outlineControl} aria-label={user.name} />
+        }
+      >
+        <Avatar className="size-6">
+          <AvatarImage src={user.avatar} alt={user.name} />
+          <AvatarFallback className="text-xs">{fallback}</AvatarFallback>
+        </Avatar>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className="p-0 font-normal">
+            <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
+              <Avatar className="size-8">
+                <AvatarFallback>{fallback}</AvatarFallback>
+              </Avatar>
+              <div className="grid flex-1 text-left text-sm leading-tight">
+                <span className="truncate font-medium">{user.name}</span>
+                <span className="truncate text-xs text-muted-foreground">{user.email}</span>
+              </div>
+            </div>
+          </DropdownMenuLabel>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuItem render={<Link href="/app/account" />}>
+            <BadgeCheckIcon />
+            Account
+          </DropdownMenuItem>
+          <DropdownMenuItem render={<Link href="/app/account/settings" />}>
+            <BellIcon />
+            Notifications
+          </DropdownMenuItem>
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <SunIcon />
+              Theme
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <DropdownMenuItem onClick={() => setTheme("light")}>Light</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setTheme("dark")}>Dark</DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => void signOut()}>
+          <LogOutIcon />
+          Log out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+type HeaderNotice = {
+  id: string
+  title: string
+  detail: string
+  time: string
+  unread: boolean
+}
+
+function HeaderNotifications() {
+  const [items, setItems] = React.useState<HeaderNotice[]>([])
+  const fresh = items.filter((item) => item.unread)
+  const earlier = items.filter((item) => !item.unread)
+  const unread = fresh.length
+
+  function markRead(id: string) {
+    setItems((current) => current.map((item) => (item.id === id ? { ...item, unread: false } : item)))
+  }
+
+  function markAllRead() {
+    setItems((current) => current.map((item) => ({ ...item, unread: false })))
+  }
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className={`relative ${outlineControl}`}
+            aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}
+          />
+        }
+      >
+        <BellIcon />
+        {unread > 0 ? (
+          <span className="absolute top-0.5 right-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] leading-none font-semibold text-primary-foreground tabular-nums">
+            {unread}
+          </span>
+        ) : null}
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        sideOffset={8}
+        collisionPadding={12}
+        collisionAvoidance={{ side: "shift", align: "shift", fallbackAxisSide: "none" }}
+        className="w-[min(23.5rem,calc(100vw-2rem))] max-h-[min(42rem,calc(100dvh-6rem))] gap-0 overflow-hidden rounded-2xl p-0 shadow-[0_0_0_1px_rgb(0_0_0/0.07),0_24px_48px_-12px_rgb(0_0_0/0.22)] dark:shadow-[0_0_0_1px_rgb(255_255_255/0.1),0_24px_48px_-12px_rgb(0_0_0/0.6)]"
+      >
+        <div className="flex h-12 shrink-0 items-center justify-between gap-3 pr-2 pl-4">
+          <h2 className="flex items-center gap-2 text-sm font-medium">
+            Notifications
+            {unread > 0 ? (
+              <span className="rounded-full bg-muted px-1.5 text-xs leading-5 text-muted-foreground tabular-nums">
+                {unread} new
+              </span>
+            ) : null}
+          </h2>
+          <button
+            type="button"
+            onClick={markAllRead}
+            disabled={unread === 0}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring disabled:text-muted-foreground disabled:hover:bg-transparent"
+          >
+            <CheckCheckIcon className="size-4" />
+            Mark all read
+          </button>
+        </div>
+        <div className="min-h-0 overflow-y-auto overscroll-contain px-2 pb-2">
+          {fresh.length > 0 ? (
+            <section aria-label="New">
+              <h3 className="px-2 pt-3 pb-1 text-xs font-medium text-muted-foreground">New</h3>
+              <ul>
+                {fresh.map((item) => (
+                  <NoticeRow key={item.id} item={item} onRead={() => markRead(item.id)} />
+                ))}
+              </ul>
+            </section>
+          ) : null}
+          <div className="my-2 overflow-hidden rounded-lg bg-muted/40 px-4 pt-5 pb-4 text-center">
+            <p className="text-sm font-medium">{unread ? "That's everything new" : "You're all caught up"}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {earlier.length ? "Earlier notifications are below." : "Sales, staff changes, and organization updates show up here."}
+            </p>
+          </div>
+          {earlier.length > 0 ? (
+            <section aria-label="Earlier">
+              <h3 className="px-2 pt-3 pb-1 text-xs font-medium text-muted-foreground">Earlier</h3>
+              <ul>
+                {earlier.map((item) => (
+                  <NoticeRow key={item.id} item={item} onRead={() => markRead(item.id)} />
+                ))}
+              </ul>
+            </section>
+          ) : null}
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function NoticeRow({ item, onRead }: { item: HeaderNotice; onRead: () => void }) {
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onRead}
+        className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-muted/70 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+      >
+        <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-card text-muted-foreground shadow-[0_0_0_1px_var(--color-border)]">
+          <BellIcon className="size-4" />
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className={`truncate text-sm font-medium ${item.unread ? "text-foreground" : "text-foreground/70"}`}>
+            {item.title}
+          </span>
+          <span className="truncate text-xs text-muted-foreground">
+            {item.detail}, {item.time} ago
+          </span>
+        </span>
+        <span
+          aria-hidden
+          className={`size-2 shrink-0 rounded-full bg-teal-500 transition-[opacity,scale] ${item.unread ? "" : "scale-50 opacity-0"}`}
+        />
+        {item.unread ? <span className="sr-only">Unread</span> : null}
+      </button>
+    </li>
+  )
+}
 
 function HeaderBreadcrumb() {
   const pathname = usePathname()
@@ -88,6 +357,12 @@ function Mark({ className }: { className?: string }) {
   )
 }
 
+function backHref(pathname: string) {
+  const path = pathname.split("?")[0]?.replace(/\/$/, "") || "/"
+  if (path.startsWith("/app/setup")) return "/app"
+  return null
+}
+
 function destinations(pathname: string) {
   const shell = resolveShell(pathname)
   const items = navForShell(shell).flatMap((section) =>
@@ -112,6 +387,9 @@ export function AppHeader() {
   const notice = useIslandToast()
   const home = shell.businessId ? `/app/${shell.businessId}` : "/app"
   const [hover, setHover] = React.useState(false)
+  const [feedbackOpen, setFeedbackOpen] = React.useState(false)
+  const [feedback, setFeedback] = React.useState("")
+  const back = backHref(pathname)
   const [open, setOpen] = React.useState(false)
   const [query, setQuery] = React.useState("")
   const searchRef = React.useRef<HTMLInputElement>(null)
@@ -270,7 +548,15 @@ export function AppHeader() {
         className="pointer-events-auto absolute bg-background/60 ring-1 ring-foreground/10 backdrop-blur-xl"
       >
       <div className="absolute inset-y-0 left-0 z-10 flex items-center gap-2 px-4">
-        <SidebarTrigger className="-ml-1 transition-none!" />
+        {sidebarHidden(pathname) ? (
+          back ? (
+            <Button variant="outline" size="icon" className={outlineControl} aria-label="Back" render={<Link href={back} />}>
+              <ArrowLeftIcon />
+            </Button>
+          ) : null
+        ) : (
+          <SidebarTrigger className="-ml-1 transition-none!" />
+        )}
         <Separator orientation="vertical" className="mr-2 data-vertical:h-4 data-vertical:self-auto" />
         <Suspense fallback={<div className="h-4 w-28 rounded bg-muted" />}>
           <HeaderBreadcrumb />
@@ -278,11 +564,21 @@ export function AppHeader() {
       </div>
       <div className="absolute inset-y-0 right-0 z-10 flex items-center gap-1 px-4">
         {shell.businessId ? (
-          <Button variant="ghost" size="sm" className="h-8 transition-none!" render={<Link href={`/app/${shell.businessId}/help`} />}>
+          <Button variant="outline" size="sm" className={`h-8 ${outlineControl}`} render={<Link href={`/app/${shell.businessId}/help`} />}>
             Help
           </Button>
         ) : null}
-        <ThemeToggle className="transition-none!" />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={`h-8 ${outlineControl}`}
+          onClick={() => setFeedbackOpen(true)}
+        >
+          Feedback
+        </Button>
+        <HeaderNotifications />
+        <HeaderAccount />
       </div>
       <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center">
         <div
@@ -434,6 +730,32 @@ export function AppHeader() {
         </div>
       </div>
       </motion.div>
+      <Dialog open={feedbackOpen} onOpenChange={setFeedbackOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Feedback</DialogTitle>
+            <DialogDescription>Tell us what is working and what is in the way.</DialogDescription>
+          </DialogHeader>
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={(event) => {
+              event.preventDefault()
+              if (!feedback.trim()) return
+              setFeedback("")
+              setFeedbackOpen(false)
+              toast.success("Feedback sent.")
+            }}
+          >
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="header-feedback">Message</Label>
+              <Textarea id="header-feedback" value={feedback} required onChange={(event) => setFeedback(event.target.value)} />
+            </div>
+            <DialogFooter>
+              <Button type="submit" disabled={feedback.trim() === ""}>Send</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </header>
   )
 }

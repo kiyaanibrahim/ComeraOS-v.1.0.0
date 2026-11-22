@@ -11,18 +11,5 @@ export default function BusinessesPage() {
 }
 
 async function BusinessesContent() {
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <h1 className="font-heading text-xl font-medium tracking-tight">
-          Business portfolio
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Every organization you own. Open a business on its card to enter that business.
-        </p>
-      </div>
-
-      <BusinessPortfolio />
-    </div>
-  )
+  return <BusinessPortfolio />
 }

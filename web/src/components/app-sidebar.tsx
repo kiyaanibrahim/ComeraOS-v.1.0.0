@@ -182,6 +182,9 @@ function SidebarUser() {
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+  const pathname = usePathname()
+  const path = pathname.split("?")[0]?.replace(/\/$/, "") || "/"
+  if (path === "/app" || path.startsWith("/app/setup")) return null
   return (
     <Sidebar collapsible="icon" {...props}>
       <Suspense fallback={<SidebarNavFallback />}>
