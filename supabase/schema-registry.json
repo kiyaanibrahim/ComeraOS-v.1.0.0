@@ -1,6 +1,7 @@
 {
   "routes": {
     "/app": { "tables": ["organizations", "businesses", "business_settings", "locations", "registers", "register_sessions", "orders", "business_members", "profiles"] },
+    "/app/setup/[organizationId]": { "tables": ["organizations", "profiles", "organization_industries", "businesses", "places", "locations", "registers", "organization_employees", "employee_store_assignments"] },
     "/app/[businessId]": { "tables": ["businesses", "orders", "order_lines", "locations", "nav_shortcuts"] },
     "/app/[businessId]/pos": { "tables": ["products", "categories", "customers", "inventory_balances", "inventory_movements", "batches", "locations", "registers", "register_sessions", "payments", "orders", "order_lines", "bills", "bill_lines", "business_settings", "quotations", "quotation_lines"] },
     "/app/[businessId]/pos/register": { "tables": ["registers", "register_sessions", "register_cash_moves", "locations", "payments"] },
@@ -35,9 +36,9 @@
     "/app/[businessId]/analytics": { "tables": ["businesses", "orders", "order_lines", "locations"] },
     "/app/[businessId]/reporting": { "tables": ["financial_reports"] },
     "/app/[businessId]/settings": { "tables": ["businesses", "locations", "business_members", "subscriptions", "plans"] },
-    "/app/[businessId]/settings/settings": { "tables": ["businesses", "business_settings", "organizations"] },
+    "/app/[businessId]/settings/settings": { "tables": ["businesses", "business_settings", "organizations", "organization_industries"] },
     "/app/[businessId]/settings/staff": { "tables": ["business_members", "roles", "profiles"] },
-    "/app/[businessId]/settings/locations": { "tables": ["locations"] },
+    "/app/[businessId]/settings/locations": { "tables": ["locations", "places"] },
     "/app/[businessId]/settings/registers": { "tables": ["registers", "locations"] },
     "/app/[businessId]/settings/billing": { "tables": ["subscriptions", "platform_invoices", "plans"] },
     "/app/admin": { "tables": ["portfolios", "businesses"] },

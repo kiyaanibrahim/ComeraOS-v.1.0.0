@@ -61,6 +61,7 @@ function formSnapshot(values: {
   invoicePrefix: string
   orderPrefix: string
   address: string
+  industryId: string
 }) {
   return JSON.stringify(values)
 }
@@ -85,6 +86,8 @@ export function BusinessConfig({ businessKey }: { businessKey: string }) {
   const [invoicePrefix, setInvoicePrefix] = useState("")
   const [orderPrefix, setOrderPrefix] = useState("")
   const [address, setAddress] = useState("")
+  const [industryId, setIndustryId] = useState("")
+  const [industries, setIndustries] = useState<{ id: string; name: string }[]>([])
   const [saving, setSaving] = useState(false)
   const [baseline, setBaseline] = useState("")
   const current = formSnapshot({
@@ -98,6 +101,7 @@ export function BusinessConfig({ businessKey }: { businessKey: string }) {
     invoicePrefix,
     orderPrefix,
     address,
+    industryId,
   })
   const dirty = baseline !== "" && baseline !== current
   const unsaved = useUnsavedChanges(dirty)
@@ -107,7 +111,7 @@ export function BusinessConfig({ businessKey }: { businessKey: string }) {
     const [businessRow, settingsRow] = await Promise.all([
       supabase
         .from("businesses")
-        .select("name, currency, locale, timezone, organizations(name)")
+        .select("name, currency, locale, timezone, industry_id, organization_id, organizations(name)")
         .eq("id", business.id)
         .maybeSingle(),
       supabase
@@ -120,8 +124,29 @@ export function BusinessConfig({ businessKey }: { businessKey: string }) {
       toast.error(businessRow.error?.message ?? settingsRow.error?.message ?? "Couldn't load settings.")
       return
     }
+    const organizationId = businessRow.data?.organization_id
+    const industryResult = organizationId
+      ? await supabase.from("organization_industries").select("id, name").eq("organization_id", organizationId).order("name")
+      : { data: [], error: null }
+    if (industryResult.error) {
+      toast.error(industryResult.error.message)
+      return
+    }
+    setIndustries(industryResult.data ?? [])
     const organization = businessRow.data?.organizations
     const organizationName = organization && !Array.isArray(organization) ? organization.name : ""
+    let address = addressLine(settingsRow.data?.address ?? null)
+    if (!address) {
+      const [placeRows, locationRows] = await Promise.all([
+        supabase.from("places").select("address").eq("business_id", business.id),
+        supabase.from("locations").select("address").eq("business_id", business.id),
+      ])
+      const lines = [...(placeRows.data ?? []), ...(locationRows.data ?? [])].map((row) => addressLine(row.address)).filter(Boolean)
+      address = lines[0] ?? ""
+      if (address) {
+        await supabase.from("business_settings").update({ address: { line: address } }).eq("business_id", business.id)
+      }
+    }
     const next = {
       name: businessRow.data?.name ?? "",
       currency: businessRow.data?.currency || "USD",
@@ -132,7 +157,8 @@ export function BusinessConfig({ businessKey }: { businessKey: string }) {
       taxRate: String(settingsRow.data?.tax_rate ?? 0),
       invoicePrefix: settingsRow.data?.invoice_prefix ?? "",
       orderPrefix: settingsRow.data?.order_prefix ?? "",
-      address: addressLine(settingsRow.data?.address ?? null),
+      address,
+      industryId: businessRow.data?.industry_id ?? "",
     }
     setName(next.name)
     setCurrency(next.currency)
@@ -144,6 +170,7 @@ export function BusinessConfig({ businessKey }: { businessKey: string }) {
     setInvoicePrefix(next.invoicePrefix)
     setOrderPrefix(next.orderPrefix)
     setAddress(next.address)
+    setIndustryId(next.industryId)
     setBaseline(formSnapshot(next))
   }, [business, supabase])
 
@@ -167,7 +194,7 @@ export function BusinessConfig({ businessKey }: { businessKey: string }) {
     const nextSlug = await availableSlug(supabase, slugFromName(nextName), business.id)
     const businessResult = await supabase
       .from("businesses")
-      .update({ name: nextName, slug: nextSlug, currency, locale, timezone })
+      .update({ name: nextName, slug: nextSlug, currency, locale, timezone, industry_id: industryId || null })
       .eq("id", business.id)
     const settingsResult = await supabase
       .from("business_settings")
@@ -222,6 +249,30 @@ export function BusinessConfig({ businessKey }: { businessKey: string }) {
               <p className="text-sm text-muted-foreground">
                 The incorporated name. Rename it from the business portfolio.
               </p>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="business-industry">Industry</FieldLabel>
+              {industries.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Industries are added in organization setup.</p>
+              ) : (
+                <Select
+                  value={industryId || "none"}
+                  items={{ none: "No industry", ...Object.fromEntries(industries.map((industry) => [industry.id, industry.name])) }}
+                  onValueChange={(value) => setIndustryId(!value || value === "none" ? "" : value)}
+                >
+                  <SelectTrigger id="business-industry" className="w-full">
+                    <SelectValue placeholder="Industry" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No industry</SelectItem>
+                    {industries.map((industry) => (
+                      <SelectItem key={industry.id} value={industry.id}>
+                        {industry.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </Field>
             <Field>
               <FieldLabel htmlFor="tax-id">Tax ID</FieldLabel>

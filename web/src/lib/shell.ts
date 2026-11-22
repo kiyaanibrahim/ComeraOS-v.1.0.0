@@ -20,6 +20,9 @@ export function resolveShell(pathname: string): {
   if (path === "/app/admin" || path.startsWith("/app/admin/")) {
     return { layer: "admin", businessId: null }
   }
+  if (path === "/app/setup" || path.startsWith("/app/setup/")) {
+    return { layer: "businesses", businessId: null }
+  }
 
   const match = path.match(/^\/app\/([^/]+)(\/.*)?$/)
   if (!match) {

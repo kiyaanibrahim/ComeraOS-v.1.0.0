@@ -54,7 +54,16 @@ type LocationRow = {
   is_active: boolean
   fulfillment_warehouse_id: string | null
   warehouse: string
+  place_id: string | null
+  place: string
+  sales_channel: string | null
 }
+
+const channels = {
+  physical: "Physical",
+  online: "Online",
+  both: "Physical / Online",
+} as const
 
 function addressLine(address: Json): string {
   if (!address || typeof address !== "object" || Array.isArray(address)) return ""
@@ -74,11 +83,15 @@ const emptyDraft = {
   line: "",
   isActive: true,
   fulfillmentWarehouseId: "",
+  placeId: "",
+  newPlace: "",
+  channel: "" as "" | keyof typeof channels,
 }
 
 export function LocationsDesk({ businessKey }: { businessKey: string }) {
   const { supabase, business, ready, error: loadError } = useBusiness(businessKey)
   const [rows, setRows] = useState<LocationRow[]>([])
+  const [places, setPlaces] = useState<{ id: string; name: string }[]>([])
   const [draft, setDraft] = useState(emptyDraft)
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -87,25 +100,36 @@ export function LocationsDesk({ businessKey }: { businessKey: string }) {
 
   const reload = useCallback(async () => {
     if (!business) return
-    const { data, error } = await supabase
-      .from("locations")
-      .select("id, name, kind, address, is_active, fulfillment_warehouse_id")
-      .eq("business_id", business.id)
-      .order("name")
-    if (error) {
-      toast.error(error.message)
+    const [locationResult, placeResult] = await Promise.all([
+      supabase
+        .from("locations")
+        .select("id, name, kind, address, is_active, fulfillment_warehouse_id, place_id, sales_channel")
+        .eq("business_id", business.id)
+        .order("name"),
+      supabase.from("places").select("id, name, address").eq("business_id", business.id).order("name"),
+    ])
+    if (locationResult.error || placeResult.error) {
+      toast.error(locationResult.error?.message ?? placeResult.error?.message ?? "Couldn't load locations.")
       return
     }
-    const names = new Map((data ?? []).map((row) => [row.id, row.name]))
+    const data = locationResult.data ?? []
+    const placeRows = placeResult.data ?? []
+    setPlaces(placeRows)
+    const names = new Map(data.map((row) => [row.id, row.name]))
+    const placeNames = new Map(placeRows.map((row) => [row.id, row.name]))
+    const placeLines = new Map(placeRows.map((row) => [row.id, addressLine(row.address)]))
     setRows(
-      (data ?? []).map((row) => ({
+      data.map((row) => ({
         id: row.id,
         name: row.name,
         kind: asKind(row.kind),
-        line: addressLine(row.address),
+        line: addressLine(row.address) || (row.place_id ? placeLines.get(row.place_id) ?? "" : ""),
         is_active: row.is_active,
         fulfillment_warehouse_id: row.fulfillment_warehouse_id,
         warehouse: row.fulfillment_warehouse_id ? names.get(row.fulfillment_warehouse_id) ?? "Warehouse" : "—",
+        place_id: row.place_id,
+        place: row.place_id ? placeNames.get(row.place_id) ?? "Place" : "—",
+        sales_channel: row.sales_channel,
       })),
     )
   }, [business, supabase])
@@ -116,6 +140,7 @@ export function LocationsDesk({ businessKey }: { businessKey: string }) {
 
   const warehouses = rows.filter((row) => row.kind === "warehouse")
   const warehouseItems = Object.fromEntries(warehouses.map((row) => [row.id, row.name]))
+  const placeItems = Object.fromEntries(places.map((place) => [place.id, place.name]))
   const sells = draft.kind === "store" || draft.kind === "site"
 
   function openCreate() {
@@ -131,6 +156,9 @@ export function LocationsDesk({ businessKey }: { businessKey: string }) {
       line: row.line,
       isActive: row.is_active,
       fulfillmentWarehouseId: row.fulfillment_warehouse_id ?? "",
+      placeId: row.place_id ?? "",
+      newPlace: "",
+      channel: row.sales_channel === "online" || row.sales_channel === "both" || row.sales_channel === "physical" ? row.sales_channel : "",
     })
     setOpen(true)
   }
@@ -147,12 +175,30 @@ export function LocationsDesk({ businessKey }: { businessKey: string }) {
       return
     }
     setSaving(true)
+    let placeId = draft.placeId || null
+    const placeName = draft.newPlace.trim()
+    if (placeName) {
+      const created = await supabase
+        .from("places")
+        .insert({ business_id: business.id, name: placeName, address: { line: draft.line.trim() } })
+        .select("id")
+        .single()
+      if (created.error || !created.data) {
+        setSaving(false)
+        toast.error(created.error?.message ?? "Couldn't add the place.")
+        return
+      }
+      placeId = created.data.id
+    }
+    const channel = sells && (draft.channel === "physical" || draft.channel === "online" || draft.channel === "both") ? draft.channel : null
     const payload = {
       name,
       kind: draft.kind,
       address: { line: draft.line.trim() },
       is_active: draft.isActive,
       fulfillment_warehouse_id: sells ? draft.fulfillmentWarehouseId || null : null,
+      place_id: placeId,
+      sales_channel: channel,
     }
     const result = draft.id
       ? await supabase.from("locations").update(payload).eq("id", draft.id).eq("business_id", business.id)
@@ -199,9 +245,18 @@ export function LocationsDesk({ businessKey }: { businessKey: string }) {
         header: ({ column }) => <DataTableColumnHeader column={column} title="Warehouse" />,
       },
       {
+        accessorKey: "place",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Place" />,
+      },
+      {
         accessorKey: "line",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Address" />,
         cell: ({ row }) => row.original.line || "—",
+      },
+      {
+        accessorKey: "sales_channel",
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Channel" />,
+        cell: ({ row }) => (row.original.sales_channel ? channels[row.original.sales_channel as keyof typeof channels] ?? row.original.sales_channel : "—"),
       },
       {
         accessorKey: "is_active",
@@ -258,6 +313,34 @@ export function LocationsDesk({ businessKey }: { businessKey: string }) {
               />
             </Field>
             <Field>
+              <FieldLabel htmlFor="location-place">Place</FieldLabel>
+              {places.length > 0 ? (
+                <Select
+                  value={draft.placeId}
+                  items={placeItems}
+                  onValueChange={(value) => setDraft((current) => ({ ...current, placeId: value ?? "" }))}
+                >
+                  <SelectTrigger id="location-place" className="w-full">
+                    <SelectValue placeholder="Choose a place" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {places.map((place) => (
+                      <SelectItem key={place.id} value={place.id}>
+                        {place.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <p className="text-sm text-muted-foreground">No places yet. Create one below, or leave this location ungrouped.</p>
+              )}
+              <Input
+                value={draft.newPlace}
+                placeholder="Or create a place"
+                onValueChange={(value) => setDraft((current) => ({ ...current, newPlace: value }))}
+              />
+            </Field>
+            <Field>
               <FieldLabel htmlFor="location-kind">Kind</FieldLabel>
               <Select
                 value={draft.kind}
@@ -307,6 +390,32 @@ export function LocationsDesk({ businessKey }: { businessKey: string }) {
                 ) : (
                   <p className="text-sm text-muted-foreground">Add a warehouse before this store can sell.</p>
                 )}
+              </Field>
+            ) : null}
+            {sells ? (
+              <Field>
+                <FieldLabel htmlFor="location-channel">Sales channel</FieldLabel>
+                <Select
+                  value={draft.channel}
+                  items={channels}
+                  onValueChange={(value) =>
+                    setDraft((current) => ({
+                      ...current,
+                      channel: value === "online" || value === "both" || value === "physical" ? value : "",
+                    }))
+                  }
+                >
+                  <SelectTrigger id="location-channel" className="w-full">
+                    <SelectValue placeholder="Physical, online, or both" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(channels).map(([value, label]) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </Field>
             ) : null}
             <Field>

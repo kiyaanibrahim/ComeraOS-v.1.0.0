@@ -413,6 +413,7 @@ export type Database = {
           created_at: string
           currency: string
           id: string
+          industry_id: string | null
           locale: string
           name: string
           organization_id: string
@@ -427,6 +428,7 @@ export type Database = {
           created_at?: string
           currency?: string
           id?: string
+          industry_id?: string | null
           locale?: string
           name: string
           organization_id: string
@@ -441,6 +443,7 @@ export type Database = {
           created_at?: string
           currency?: string
           id?: string
+          industry_id?: string | null
           locale?: string
           name?: string
           organization_id?: string
@@ -452,6 +455,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "businesses_industry_id_organization_id_fkey"
+            columns: ["industry_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "organization_industries"
+            referencedColumns: ["id", "organization_id"]
+          },
           {
             foreignKeyName: "businesses_organization_id_fkey"
             columns: ["organization_id"]
@@ -773,6 +783,39 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "customers"
             referencedColumns: ["id", "business_id"]
+          },
+        ]
+      }
+      employee_store_assignments: {
+        Row: {
+          created_at: string
+          employee_id: string
+          location_id: string
+        }
+        Insert: {
+          created_at?: string
+          employee_id: string
+          location_id: string
+        }
+        Update: {
+          created_at?: string
+          employee_id?: string
+          location_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "employee_store_assignments_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "organization_employees"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "employee_store_assignments_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -1106,6 +1149,8 @@ export type Database = {
           is_active: boolean
           kind: string
           name: string
+          place_id: string | null
+          sales_channel: string | null
           updated_at: string
         }
         Insert: {
@@ -1117,6 +1162,8 @@ export type Database = {
           is_active?: boolean
           kind?: string
           name: string
+          place_id?: string | null
+          sales_channel?: string | null
           updated_at?: string
         }
         Update: {
@@ -1128,6 +1175,8 @@ export type Database = {
           is_active?: boolean
           kind?: string
           name?: string
+          place_id?: string | null
+          sales_channel?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -1143,6 +1192,13 @@ export type Database = {
             columns: ["fulfillment_warehouse_id", "business_id"]
             isOneToOne: false
             referencedRelation: "locations"
+            referencedColumns: ["id", "business_id"]
+          },
+          {
+            foreignKeyName: "locations_place_id_business_id_fkey"
+            columns: ["place_id", "business_id"]
+            isOneToOne: false
+            referencedRelation: "places"
             referencedColumns: ["id", "business_id"]
           },
         ]
@@ -1339,6 +1395,89 @@ export type Database = {
           },
         ]
       }
+      organization_employees: {
+        Row: {
+          created_at: string
+          display_name: string
+          email: string | null
+          id: string
+          job_title: string | null
+          organization_id: string
+          phone: string | null
+          reports_to_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          display_name: string
+          email?: string | null
+          id?: string
+          job_title?: string | null
+          organization_id: string
+          phone?: string | null
+          reports_to_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string
+          email?: string | null
+          id?: string
+          job_title?: string | null
+          organization_id?: string
+          phone?: string | null
+          reports_to_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_employees_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_employees_reports_to_id_organization_id_fkey"
+            columns: ["reports_to_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "organization_employees"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      organization_industries: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          organization_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          organization_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          organization_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_industries_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organizations: {
         Row: {
           created_at: string
@@ -1463,6 +1602,41 @@ export type Database = {
           module?: string
         }
         Relationships: []
+      }
+      places: {
+        Row: {
+          address: Json
+          business_id: string
+          created_at: string
+          id: string
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          address?: Json
+          business_id: string
+          created_at?: string
+          id?: string
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          address?: Json
+          business_id?: string
+          created_at?: string
+          id?: string
+          name?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "places_business_id_fkey"
+            columns: ["business_id"]
+            isOneToOne: false
+            referencedRelation: "businesses"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       plan_capabilities: {
         Row: {
