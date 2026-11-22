@@ -12,6 +12,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart"
@@ -248,16 +249,11 @@ function BusinessSnapshot({
   ]
   return (
     <li className="flex flex-col gap-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <Link href={`/app/${business.slug}`} className="font-medium hover:underline">
-            {business.name}
-          </Link>
-          <p className="text-sm text-muted-foreground">{countLabel(locations.length, "Location", "Locations")}</p>
-        </div>
-        <Link href={`/app/${business.slug}/settings`} className="shrink-0 text-sm text-muted-foreground hover:text-foreground">
-          Settings
+      <div className="min-w-0">
+        <Link href={`/app/${business.slug}`} className="font-medium hover:underline">
+          {business.name}
         </Link>
+        <p className="text-sm text-muted-foreground">{countLabel(locations.length, "Location", "Locations")}</p>
       </div>
       {locations.length === 0 ? (
         <p className="text-sm text-muted-foreground">No locations yet.</p>
@@ -755,8 +751,8 @@ export function BusinessPortfolio() {
 
   return (
     <>
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-10">
       {loadError ? <p className="text-sm text-destructive">{loadError}</p> : null}
-      <div className="flex flex-col gap-10">
       <PortfolioSummary
         ready={ready}
         displayName={displayName}
@@ -776,26 +772,32 @@ export function BusinessPortfolio() {
             <Card key={organization.id} className="h-full">
               <CardHeader>
                 <div className="flex items-start justify-between gap-3">
-                  <div className="flex flex-col items-start gap-2">
-                    <CardTitle>{organization.name}</CardTitle>
-                    <Button variant="outline" size="sm" render={<Link href={`/app/setup/${organization.id}`} />}>
-                      Organization setup
-                    </Button>
-                  </div>
-                  {owns ? (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        render={<Button type="button" variant="ghost" size="icon-sm" aria-label={`${organization.name} actions`} />}
-                      >
-                        <MoreHorizontal />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem variant="destructive" onClick={() => askDelete(organization)}>
-                          Delete organization
+                  <CardTitle>{organization.name}</CardTitle>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={<Button type="button" variant="ghost" size="icon-sm" aria-label={`${organization.name} actions`} />}
+                    >
+                      <MoreHorizontal />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-max! whitespace-nowrap">
+                      <DropdownMenuItem render={<Link href={`/app/setup/${organization.id}`} />}>
+                        Organization setup
+                      </DropdownMenuItem>
+                      {organization.businesses.map((business) => (
+                        <DropdownMenuItem key={business.id} render={<Link href={`/app/${business.slug}/settings`} />}>
+                          {organization.businesses.length === 1 ? "Settings" : `${business.name} settings`}
                         </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  ) : null}
+                      ))}
+                      {owns ? (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem variant="destructive" onClick={() => askDelete(organization)}>
+                            Delete organization
+                          </DropdownMenuItem>
+                        </>
+                      ) : null}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
               </CardHeader>
               <CardContent>
