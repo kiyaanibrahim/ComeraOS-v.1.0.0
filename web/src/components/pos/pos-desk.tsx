@@ -31,16 +31,22 @@ import { pushIslandReceipt } from "@/lib/island-toast"
 import { money, quantity } from "@/lib/flow/format"
 import { callRpc } from "@/lib/flow/rpc"
 import type { BusinessRecord, FlowClient } from "@/lib/flow/use-business"
-import { cn } from "@/lib/utils"
+import { cn, randomUUID } from "@/lib/utils"
 
 type ProductRow = {
   id: string
   sku: string
+  barcode: string | null
   name: string
   price: number
   status: string
   category_id: string | null
+  product_type: string
+  parent_id: string | null
+  tax_mode: string
+  tax_rate: number | null
 }
+type BundleComponent = { bundle_id: string; component_id: string; quantity: number }
 type Balance = { product_id: string; location_id: string; quantity: number }
 type LocationRow = { id: string; name: string; kind: string }
 type RegisterRow = {
@@ -78,6 +84,33 @@ type DraftTicket = {
   discount: number
   total: number
 }
+type SavedDraft = {
+  id: string
+  number: string
+  customer_id: string | null
+  notes: string | null
+  discount: number
+  total: number
+}
+type ParkedTicket = {
+  key: string
+  serverId: string | null
+  number: string
+  customerId: string | null
+  total: number
+  notes: string
+  discountMode: DiscountMode
+  discountInput: string
+  cart: CartLine[]
+  tendered: string
+  transferRef: string
+  method: PayMethod
+  fromServer: boolean
+}
+
+function localTicketKey() {
+  return `local:${randomUUID()}`
+}
 const PAY_METHODS: { id: PayMethod; label: string }[] = [
   { id: "bank_transfer", label: "Bank transfer" },
   { id: "cash", label: "Cash" },
@@ -106,6 +139,8 @@ function Desk({
   supabase: FlowClient
 }) {
   const [products, setProducts] = useState<ProductRow[]>([])
+  const [bundleComponents, setBundleComponents] = useState<BundleComponent[]>([])
+  const [variantParent, setVariantParent] = useState<ProductRow | null>(null)
   const [categories, setCategories] = useState<{ id: string; name: string }[]>([])
   const [balances, setBalances] = useState<Balance[]>([])
   const [locations, setLocations] = useState<LocationRow[]>([])
@@ -133,19 +168,34 @@ function Desk({
   const [discountInput, setDiscountInput] = useState("")
   const [drafts, setDrafts] = useState<DraftTicket[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [qtyDraft, setQtyDraft] = useState<Record<string, string>>({})
+  const [parked, setParked] = useState<Record<string, ParkedTicket>>({})
+  const initialTicketKey = useState(localTicketKey)[0]
+  const [activeKey, setActiveKey] = useState(initialTicketKey)
+  const [ticketOrder, setTicketOrder] = useState<string[]>([initialTicketKey])
   const quoteParams = useSearchParams()
   const quoteId = quoteParams.get("quote")
   const loadedQuote = useRef<string | null>(null)
   const activeIdRef = useRef<string | null>(null)
+  const activeKeyRef = useRef(initialTicketKey)
+  const ticketOrderRef = useRef<string[]>([initialTicketKey])
+  const parkedRef = useRef<Record<string, ParkedTicket>>({})
+  const draftsRef = useRef<DraftTicket[]>([])
   const skipSave = useRef(false)
+  const switching = useRef(false)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const ticketStrip = useRef<HTMLDivElement>(null)
+  activeKeyRef.current = activeKey
+  ticketOrderRef.current = ticketOrder
+  parkedRef.current = parked
+  draftsRef.current = drafts
 
   const load = useCallback(async () => {
-    const [productRes, categoryRes, balanceRes, locationRes, registerRes, customerRes, settingsRes] = await Promise.all([
+    const [productRes, categoryRes, balanceRes, locationRes, registerRes, customerRes, settingsRes, bundleRes] =
+      await Promise.all([
       supabase
         .from("products")
-        .select("id, sku, name, price, status, category_id")
+        .select("id, sku, barcode, name, price, status, category_id, product_type, parent_id, tax_mode, tax_rate")
         .eq("business_id", business.id)
         .eq("status", "active")
         .order("name"),
@@ -168,6 +218,10 @@ function Desk({
         .order("name")
         .limit(1000),
       supabase.from("business_settings").select("tax_rate").eq("business_id", business.id).maybeSingle(),
+      supabase
+        .from("bundle_components")
+        .select("bundle_id, component_id, quantity")
+        .eq("business_id", business.id),
     ])
     const error =
       productRes.error ||
@@ -176,13 +230,15 @@ function Desk({
       locationRes.error ||
       registerRes.error ||
       customerRes.error ||
-      settingsRes.error
+      settingsRes.error ||
+      bundleRes.error
     if (error) toast.error(error.message)
 
     const tills = (registerRes.data ?? []).filter(
       (row): row is RegisterRow => Boolean(row.location_id && row.warehouse_id),
     )
-    setProducts(productRes.data ?? [])
+    setProducts((productRes.data as ProductRow[] | null) ?? [])
+    setBundleComponents((bundleRes.data as BundleComponent[] | null) ?? [])
     setCategories(categoryRes.data ?? [])
     setBalances(balanceRes.data ?? [])
     setLocations(locationRes.data ?? [])
@@ -303,11 +359,32 @@ function Desk({
     return (id: string | null) => (id ? map.get(id) ?? "Products" : "Products")
   }, [categories])
 
+  function availableQty(product: ProductRow) {
+    if (product.product_type === "variable") {
+      return products
+        .filter((item) => item.parent_id === product.id && item.status === "active")
+        .reduce((sum, variant) => sum + (stock.get(variant.id) ?? 0), 0)
+    }
+    if (product.product_type === "bundle") {
+      const parts = bundleComponents.filter((item) => item.bundle_id === product.id)
+      if (parts.length === 0) return 0
+      return Math.min(
+        ...parts.map((part) => Math.floor((stock.get(part.component_id) ?? 0) / Number(part.quantity || 1))),
+      )
+    }
+    return stock.get(product.id) ?? 0
+  }
+
   const query = search.trim().toLowerCase()
   const sellable = products.filter((product) => {
-    if ((stock.get(product.id) ?? 0) <= 0) return false
+    if (product.product_type === "variant") return false
+    if (availableQty(product) <= 0) return false
     if (!query) return true
-    return product.name.toLowerCase().includes(query) || product.sku.toLowerCase().includes(query)
+    return (
+      product.name.toLowerCase().includes(query) ||
+      product.sku.toLowerCase().includes(query) ||
+      (product.barcode ?? "").toLowerCase().includes(query)
+    )
   })
   const groups = useMemo(() => {
     const map = new Map<string, ProductRow[]>()
@@ -368,12 +445,29 @@ function Desk({
     skipSave.current = true
     activeIdRef.current = null
     setActiveId(null)
+    const key = localTicketKey()
+    activeKeyRef.current = key
+    setActiveKey(key)
+    setTicketOrder([key])
+    setParked({})
+    setQtyDraft({})
+    setCart([])
+    setNotes("")
+    setCustomerId("")
+    setCustomerQuery("")
+    setDiscountInput("")
+    setTendered("")
+    setTransferRef("")
     setRegisterId(next)
   }
 
   function setQty(product: ProductRow, next: number) {
     if (!registerOpen) return
-    const onHand = stock.get(product.id) ?? 0
+    if (product.product_type === "variable") {
+      setVariantParent(product)
+      return
+    }
+    const onHand = availableQty(product)
     const quantity = Math.min(onHand, Math.max(0, next))
     setCart((current) => {
       if (quantity <= 0) return current.filter((line) => line.productId !== product.id)
@@ -383,6 +477,35 @@ function Desk({
       }
       return current.map((line) => (line.productId === product.id ? { ...line, quantity, onHand } : line))
     })
+  }
+
+  function removeLine(productId: string) {
+    setQtyDraft((current) => {
+      if (!(productId in current)) return current
+      const next = { ...current }
+      delete next[productId]
+      return next
+    })
+    setCart((current) => current.filter((line) => line.productId !== productId))
+  }
+
+  function commitLineQty(line: CartLine, raw: string) {
+    const product = products.find((item) => item.id === line.productId)
+    const next = Number(raw)
+    if (!product || raw.trim() === "" || !Number.isFinite(next) || next <= 0) {
+      removeLine(line.productId)
+      return
+    }
+    setQty(product, next)
+  }
+
+  function addSellable(product: ProductRow, next: number) {
+    if (!registerOpen) return
+    if (product.product_type === "variable") {
+      setVariantParent(product)
+      return
+    }
+    setQty(product, next)
   }
 
   function openNewCustomer() {
@@ -428,13 +551,20 @@ function Desk({
 
   function onProductKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key !== "Enter" || !registerOpen) return
-    const sku = search.trim().toLowerCase()
-    if (!sku) return
-    const product = products.find((item) => item.sku.toLowerCase() === sku)
+    const code = search.trim().toLowerCase()
+    if (!code) return
+    const product = products.find(
+      (item) => item.sku.toLowerCase() === code || (item.barcode ?? "").toLowerCase() === code,
+    )
     if (!product) return
     event.preventDefault()
+    if (product.product_type === "variable") {
+      setVariantParent(product)
+      setSearch("")
+      return
+    }
     const current = cart.find((line) => line.productId === product.id)
-    setQty(product, (current?.quantity ?? 0) + 1)
+    addSellable(product, (current?.quantity ?? 0) + 1)
     setSearch("")
   }
 
@@ -459,6 +589,7 @@ function Desk({
     skipSave.current = true
     activeIdRef.current = null
     setActiveId(null)
+    setQtyDraft({})
     setCart([])
     setNotes("")
     setCustomerId("")
@@ -469,18 +600,65 @@ function Desk({
     setTransferRef("")
   }
 
-  async function persistDraft() {
-    if (!selected || !registerOpen) return activeIdRef.current
+  function parkedFromActive(saved: SavedDraft | null): ParkedTicket {
+    const serverId = saved?.id ?? activeIdRef.current
+    const known = serverId ? draftsRef.current.find((item) => item.id === serverId) : undefined
+    return {
+      key: activeKeyRef.current,
+      serverId,
+      number: saved?.number ?? known?.number ?? "New",
+      customerId: customerId || null,
+      total: saved ? Number(saved.total) : total,
+      notes,
+      discountMode,
+      discountInput,
+      cart,
+      tendered,
+      transferRef,
+      method,
+      fromServer: Boolean(serverId),
+    }
+  }
+
+  function applyParked(ticket: ParkedTicket) {
+    skipSave.current = true
+    activeIdRef.current = ticket.serverId
+    setActiveId(ticket.serverId)
+    setQtyDraft({})
+    setCart(ticket.cart)
+    setNotes(ticket.notes)
+    setCustomerId(ticket.customerId ?? "")
+    setCustomerQuery("")
+    setDiscountMode(ticket.discountMode)
+    setDiscountInput(ticket.discountInput)
+    setTendered(ticket.tendered)
+    setTransferRef(ticket.transferRef)
+    setMethod(ticket.method)
+  }
+
+  function parkRow(row: DraftTicket): ParkedTicket {
+    return {
+      key: row.id,
+      serverId: row.id,
+      number: row.number,
+      customerId: row.customer_id,
+      total: row.total,
+      notes: row.notes ?? "",
+      discountMode: "amount",
+      discountInput: row.discount > 0 ? String(row.discount) : "",
+      cart: [],
+      tendered: "",
+      transferRef: "",
+      method: "card",
+      fromServer: true,
+    }
+  }
+
+  async function persistDraft(): Promise<SavedDraft | null> {
+    if (!selected || !registerOpen) return null
     const orderId = activeIdRef.current
     if (cart.length === 0 && !orderId) return null
-    const saved = await callRpc<{
-      id: string
-      number: string
-      customer_id: string | null
-      notes: string | null
-      discount: number
-      total: number
-    } | null>(supabase, "save_pos_draft", {
+    const saved = await callRpc<SavedDraft | null>(supabase, "save_pos_draft", {
       p_business_id: business.id,
       p_register_id: selected.id,
       p_order_id: orderId,
@@ -495,20 +673,21 @@ function Desk({
       setActiveId(null)
       return null
     }
-    activeIdRef.current = saved.id
-    setActiveId(saved.id)
-    rememberTicket({
+    const ticket: SavedDraft = {
       id: saved.id,
       number: saved.number,
       customer_id: saved.customer_id,
       notes: saved.notes,
       discount: Number(saved.discount),
       total: Number(saved.total),
-    })
-    return saved.id
+    }
+    activeIdRef.current = ticket.id
+    setActiveId(ticket.id)
+    rememberTicket(ticket)
+    return ticket
   }
 
-  async function hydrate(id: string) {
+  async function hydrate(id: string): Promise<boolean> {
     const [orderRes, lineRes] = await Promise.all([
       supabase
         .from("orders")
@@ -525,11 +704,12 @@ function Desk({
     ])
     if (orderRes.error || lineRes.error || !orderRes.data) {
       toast.error(orderRes.error?.message ?? lineRes.error?.message ?? "This draft is no longer open")
-      return
+      return false
     }
     skipSave.current = true
     activeIdRef.current = orderRes.data.id
     setActiveId(orderRes.data.id)
+    setQtyDraft({})
     setCustomerId(orderRes.data.customer_id ?? "")
     setCustomerQuery("")
     setNotes(orderRes.data.notes ?? "")
@@ -558,47 +738,127 @@ function Desk({
       discount: Number(orderRes.data.discount),
       total: Number(orderRes.data.total),
     })
+    return true
   }
 
-  async function openTicket(id: string) {
-    if (id === activeIdRef.current) return
+  async function focusTicket(key: string) {
+    if (key === activeKeyRef.current || switching.current) return
+    const target = parkedRef.current[key]
+    if (!target) return
+    switching.current = true
     clearSaveTimer()
     try {
-      if (cart.length > 0 || activeIdRef.current) await persistDraft()
-      await hydrate(id)
+      let saved: SavedDraft | null = null
+      if (cart.length > 0 || activeIdRef.current) saved = await persistDraft()
+      const leaving = parkedFromActive(saved)
+      if (target.fromServer && target.serverId) {
+        const opened = await hydrate(target.serverId)
+        if (!opened) return
+      } else {
+        applyParked(target)
+      }
+      setParked((current) => {
+        const next = { ...current, [leaving.key]: leaving }
+        delete next[key]
+        return next
+      })
+      activeKeyRef.current = key
+      setActiveKey(key)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not open the draft")
+      toast.error(error instanceof Error ? error.message : "Could not open the ticket")
+    } finally {
+      switching.current = false
     }
   }
 
   async function startNewOrder() {
+    if (switching.current) return
+    switching.current = true
     clearSaveTimer()
     try {
-      if (cart.length > 0 || activeIdRef.current) await persistDraft()
+      let saved: SavedDraft | null = null
+      if (cart.length > 0 || activeIdRef.current) saved = await persistDraft()
+      const leaving = parkedFromActive(saved)
+      const key = localTicketKey()
+      setParked((current) => ({ ...current, [leaving.key]: leaving }))
+      setTicketOrder((current) => (current.includes(leaving.key) ? [...current, key] : [...current, leaving.key, key]))
+      activeKeyRef.current = key
+      setActiveKey(key)
+      blankTicket()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not save the draft")
-      return
+    } finally {
+      switching.current = false
     }
-    blankTicket()
   }
 
-  async function discardTicket(id: string) {
+  async function discardTicket(key: string) {
+    if (ticketOrderRef.current.length <= 1 || switching.current) return
+    switching.current = true
     clearSaveTimer()
-    const active = id === activeIdRef.current
+    const active = key === activeKeyRef.current
+    const serverId = active ? activeIdRef.current : parkedRef.current[key]?.serverId ?? null
     if (active) skipSave.current = true
     try {
-      await callRpc(supabase, "discard_pos_draft", { p_business_id: business.id, p_order_id: id })
-      setDrafts((current) => current.filter((item) => item.id !== id))
-      if (active) blankTicket()
+      if (serverId) {
+        await callRpc(supabase, "discard_pos_draft", { p_business_id: business.id, p_order_id: serverId })
+        setDrafts((current) => current.filter((item) => item.id !== serverId))
+      }
+      const remaining = ticketOrderRef.current.filter((item) => item !== key)
+      if (!active) {
+        setTicketOrder(remaining)
+        setParked((current) => {
+          const next = { ...current }
+          delete next[key]
+          return next
+        })
+        return
+      }
+      const nextKey = remaining.at(-1)
+      if (!nextKey) {
+        const fresh = localTicketKey()
+        activeKeyRef.current = fresh
+        setActiveKey(fresh)
+        setTicketOrder([fresh])
+        setParked({})
+        blankTicket()
+        return
+      }
+      const next = parkedRef.current[nextKey]
+      setTicketOrder(remaining)
+      setParked((current) => {
+        const copy = { ...current }
+        delete copy[key]
+        delete copy[nextKey]
+        return copy
+      })
+      activeKeyRef.current = nextKey
+      setActiveKey(nextKey)
+      if (next?.fromServer && next.serverId) {
+        const opened = await hydrate(next.serverId)
+        if (!opened) blankTicket()
+      } else if (next) {
+        applyParked(next)
+      } else {
+        blankTicket()
+      }
     } catch (error) {
       if (active) skipSave.current = false
       toast.error(error instanceof Error ? error.message : "Could not discard the draft")
+    } finally {
+      switching.current = false
     }
   }
 
   useEffect(() => {
     if (!registerId || !session) {
       setDrafts([])
+      const key = localTicketKey()
+      activeKeyRef.current = key
+      setActiveKey(key)
+      setTicketOrder([key])
+      setParked({})
+      blankTicket()
       return
     }
     let cancelled = false
@@ -625,14 +885,29 @@ function Desk({
         total: Number(row.total),
       }))
       setDrafts(rows)
-      if (cancelled || (quoteId && loadedQuote.current === quoteId)) return
-      if (quoteId && loadedQuote.current !== quoteId) return
+      if (cancelled) return
+      if (quoteId) {
+        const active = activeKeyRef.current
+        const parkedRows = rows.filter((row) => row.id !== activeIdRef.current)
+        setParked(Object.fromEntries(parkedRows.map((row) => [row.id, parkRow(row)])))
+        setTicketOrder([active, ...parkedRows.map((row) => row.id).filter((id) => id !== active)])
+        return
+      }
       if (activeIdRef.current && rows.some((row) => row.id === activeIdRef.current)) return
       const latest = rows.at(-1)
       if (!latest) {
+        const key = activeKeyRef.current.startsWith("local:") ? activeKeyRef.current : localTicketKey()
+        activeKeyRef.current = key
+        setActiveKey(key)
+        setTicketOrder([key])
+        setParked({})
         blankTicket()
         return
       }
+      setParked(Object.fromEntries(rows.filter((row) => row.id !== latest.id).map((row) => [row.id, parkRow(row)])))
+      setTicketOrder(rows.map((row) => row.id))
+      activeKeyRef.current = latest.id
+      setActiveKey(latest.id)
       await hydrate(latest.id)
     })()
     return () => {
@@ -659,7 +934,7 @@ function Desk({
     const node = ticketStrip.current
     if (!node) return
     node.scrollLeft = node.scrollWidth
-  }, [drafts.length])
+  }, [ticketOrder.length])
 
   useEffect(() => {
     const node = ticketStrip.current
@@ -682,7 +957,8 @@ function Desk({
     clearSaveTimer()
     setBusy(true)
     try {
-      const draftId = await persistDraft()
+      const savedDraft = await persistDraft()
+      const draftId = savedDraft?.id ?? null
       const sale = await callRpc<{
         id: string
         number: string
@@ -770,7 +1046,7 @@ function Desk({
         </div>
 
         <Input
-          placeholder="Search products or scan a SKU and press Enter…"
+          placeholder="Search products or scan a SKU/barcode and press Enter…"
           value={search}
           disabled={!registerOpen}
           onChange={(event) => setSearch(event.target.value)}
@@ -793,22 +1069,32 @@ function Desk({
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3">
                 {items.map((product) => {
                   const line = cart.find((item) => item.productId === product.id)
-                  const onHand = stock.get(product.id) ?? 0
+                  const onHand = availableQty(product)
+                  const isVariable = product.product_type === "variable"
                   return (
                     <Card key={product.id} className="gap-3 py-4">
                       <CardHeader className="px-4">
-                        <CardDescription>{product.sku}</CardDescription>
+                        <CardDescription>
+                          {product.sku}
+                          {product.product_type !== "standard" ? ` · ${product.product_type}` : ""}
+                        </CardDescription>
                         <CardTitle className="text-base">{product.name}</CardTitle>
                       </CardHeader>
                       <CardContent className="flex items-center justify-between gap-3 px-4">
-                        <div className="font-medium tabular-nums">{money(Number(product.price), business.currency)}</div>
-                        {line ? (
+                        <div className="font-medium tabular-nums">
+                          {isVariable ? "From variants" : money(Number(product.price), business.currency)}
+                        </div>
+                        {isVariable ? (
+                          <Button type="button" size="sm" onClick={() => setVariantParent(product)}>
+                            Choose
+                          </Button>
+                        ) : line ? (
                           <div className="flex items-center gap-1">
                             <Button
                               type="button"
                               size="icon-sm"
                               variant="outline"
-                              onClick={() => setQty(product, line.quantity - 1)}
+                              onClick={() => addSellable(product, line.quantity - 1)}
                             >
                               <MinusIcon />
                             </Button>
@@ -818,13 +1104,13 @@ function Desk({
                               size="icon-sm"
                               variant="outline"
                               disabled={line.quantity >= onHand}
-                              onClick={() => setQty(product, line.quantity + 1)}
+                              onClick={() => addSellable(product, line.quantity + 1)}
                             >
                               <PlusIcon />
                             </Button>
                           </div>
                         ) : (
-                          <Button type="button" size="sm" onClick={() => setQty(product, 1)}>
+                          <Button type="button" size="sm" onClick={() => addSellable(product, 1)}>
                             Add
                           </Button>
                         )}
@@ -846,14 +1132,18 @@ function Desk({
             ref={ticketStrip}
             className="flex min-w-0 flex-1 snap-x snap-mandatory gap-2 overflow-x-scroll overscroll-x-contain pb-5"
           >
-            {drafts.map((ticket) => {
-              const name = ticket.customer_id
-                ? customers.find((customer) => customer.id === ticket.customer_id)?.name ?? "Customer"
+            {(ticketOrder.length > 0 ? ticketOrder : [activeKey]).map((key) => {
+              const open = key === activeKey
+              const ticket = open ? null : parked[key]
+              if (!open && !ticket) return null
+              const customer = open ? customerId || null : ticket?.customerId ?? null
+              const name = customer
+                ? customers.find((item) => item.id === customer)?.name ?? "Customer"
                 : "Walk-in"
-              const amount = ticket.id === activeId ? total : ticket.total
-              const open = ticket.id === activeId
+              const amount = open ? total : ticket?.total ?? 0
+              const number = open ? drafts.find((item) => item.id === activeId)?.number ?? "New" : ticket?.number ?? "New"
               return (
-                <div key={ticket.id} className="group relative w-[calc((100%-1rem)/3)] shrink-0 snap-start">
+                <div key={key} className="group relative w-[calc((100%-1rem)/3)] shrink-0 snap-start">
                   <button
                     type="button"
                     className={cn(
@@ -861,21 +1151,23 @@ function Desk({
                       open ? "border-foreground" : "hover:bg-muted",
                     )}
                     disabled={!registerOpen || busy}
-                    onClick={() => void openTicket(ticket.id)}
+                    onClick={() => void focusTicket(key)}
                   >
-                    <span className="text-xs text-muted-foreground">{ticket.number}</span>
+                    <span className="text-xs text-muted-foreground">{number}</span>
                     <span className="truncate text-sm">{name}</span>
                     <span className="text-sm font-medium tabular-nums">{money(amount, business.currency)}</span>
                   </button>
-                  <button
-                    type="button"
-                    aria-label={`Discard ${ticket.number}`}
-                    className="absolute top-1.5 right-1.5 hidden size-5 items-center justify-center rounded-full text-muted-foreground group-hover:flex hover:text-foreground"
-                    disabled={!registerOpen || busy}
-                    onClick={() => void discardTicket(ticket.id)}
-                  >
-                    <XIcon className="size-3.5" />
-                  </button>
+                  {ticketOrder.length > 1 ? (
+                    <button
+                      type="button"
+                      aria-label={`Discard ${number}`}
+                      className="absolute top-1.5 right-1.5 hidden size-5 items-center justify-center rounded-full text-muted-foreground group-hover:flex hover:text-foreground"
+                      disabled={!registerOpen || busy}
+                      onClick={() => void discardTicket(key)}
+                    >
+                      <XIcon className="size-3.5" />
+                    </button>
+                  ) : null}
                 </div>
               )
             })}
@@ -884,10 +1176,7 @@ function Desk({
           <button
             type="button"
             aria-label="New order"
-            className={cn(
-              "flex w-full flex-1 items-center justify-center rounded-lg border",
-              activeId ? "hover:bg-muted" : "border-foreground",
-            )}
+            className="flex w-full flex-1 items-center justify-center rounded-lg border hover:bg-muted"
             disabled={!registerOpen || busy}
             onClick={() => void startNewOrder()}
           >
@@ -905,12 +1194,54 @@ function Desk({
               <p className="text-sm text-muted-foreground">Add items to build the order.</p>
             ) : (
               cart.map((line) => (
-                <div key={line.productId} className="flex items-center justify-between gap-3">
+                <div key={line.productId} className="flex items-center justify-between gap-3 border-b py-3">
                   <div className="min-w-0">
                     <div className="font-medium">{line.name}</div>
                     <div className="text-sm text-muted-foreground">{money(line.price, business.currency)} each</div>
                   </div>
-                  <span className="text-sm tabular-nums">{line.quantity}</span>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Input
+                      aria-label={`Quantity for ${line.name}`}
+                      className="h-8 w-16 px-1 text-center tabular-nums"
+                      type="number"
+                      min={0}
+                      step="any"
+                      inputMode="decimal"
+                      disabled={!registerOpen}
+                      value={qtyDraft[line.productId] ?? String(line.quantity)}
+                      onFocus={(event) => event.currentTarget.select()}
+                      onValueChange={(value) => {
+                        setQtyDraft((current) => ({ ...current, [line.productId]: value }))
+                        const next = Number(value)
+                        if (value.trim() === "" || !Number.isFinite(next) || next <= 0) return
+                        const product = products.find((item) => item.id === line.productId)
+                        if (product) setQty(product, next)
+                      }}
+                      onBlur={(event) => {
+                        const raw = event.currentTarget.value
+                        setQtyDraft((current) => {
+                          if (!(line.productId in current)) return current
+                          const next = { ...current }
+                          delete next[line.productId]
+                          return next
+                        })
+                        commitLineQty(line, raw)
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") event.currentTarget.blur()
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant="ghost"
+                      aria-label={`Remove ${line.name}`}
+                      disabled={!registerOpen}
+                      onClick={() => removeLine(line.productId)}
+                    >
+                      <XIcon />
+                    </Button>
+                  </div>
                 </div>
               ))
             )}
@@ -1150,6 +1481,48 @@ function Desk({
           )}
         </div>
       </Card>
+
+      <Dialog open={variantParent !== null} onOpenChange={(next) => { if (!next) setVariantParent(null) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{variantParent?.name ?? "Choose variant"}</DialogTitle>
+            <DialogDescription>Select an active variant with stock at this register.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            {products
+              .filter(
+                (item) =>
+                  item.parent_id === variantParent?.id &&
+                  item.status === "active" &&
+                  (stock.get(item.id) ?? 0) > 0,
+              )
+              .map((variant) => {
+                const onHand = stock.get(variant.id) ?? 0
+                const line = cart.find((item) => item.productId === variant.id)
+                return (
+                  <button
+                    key={variant.id}
+                    type="button"
+                    className="flex items-center justify-between rounded-md border px-3 py-2 text-left text-sm hover:bg-muted"
+                    onClick={() => {
+                      addSellable(variant, (line?.quantity ?? 0) + 1)
+                      setVariantParent(null)
+                    }}
+                  >
+                    <span>
+                      <span className="font-medium">{variant.name}</span>
+                      <span className="block text-muted-foreground">
+                        {variant.sku}
+                        {variant.barcode ? ` · ${variant.barcode}` : ""} · {quantity(onHand)} on hand
+                      </span>
+                    </span>
+                    <span className="tabular-nums">{money(Number(variant.price), business.currency)}</span>
+                  </button>
+                )
+              })}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

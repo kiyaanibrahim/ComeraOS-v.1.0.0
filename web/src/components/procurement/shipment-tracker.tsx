@@ -4,12 +4,12 @@ import Link from "next/link"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import type { ColumnDef } from "@tanstack/react-table"
 
+import { StatCard } from "@/components/analytics/stat-card"
 import { DataTable } from "@/components/data-table/data-table"
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header"
 import type { DataTableFeatures } from "@/components/data-table/data-table-features"
 import { FlowFrame } from "@/components/flow/flow-frame"
 import { LandingWorksheet } from "@/components/procurement/landing-cost"
-import { Badge } from "@/components/ui/badge"
 import {
   Card,
   CardContent,
@@ -18,9 +18,11 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { toast } from "@/components/ui/sonner"
+import { StatusBadge } from "@/components/status-badge"
 import { money, quantity, statusLabel } from "@/lib/flow/format"
 import { shipmentStages, stageIndex, stageLabel } from "@/lib/flow/procurement"
 import type { BusinessRecord, FlowClient } from "@/lib/flow/use-business"
+import { dayKey, seriesWithDelta } from "@/lib/stat-series"
 
 type Row = {
   id: string
@@ -102,6 +104,36 @@ function Tracker({
   const pipelineUnits = pipelineLines.reduce((sum, line) => sum + Number(line.quantity) - Number(line.quantity_received), 0)
   const pipelineCost = pipeline.reduce((sum, row) => sum + Number(row.merchandise_total), 0)
   const projectedRevenue = pipelineLines.reduce((sum, line) => sum + Number(line.sell_price) * Number(line.quantity), 0)
+  const inTransit = rows.filter((row) => row.status === "in_transit").length
+  const costSeries = useMemo(
+    () =>
+      seriesWithDelta(pipeline.map((row) => ({ day: dayKey(row.updated_at), amount: Number(row.merchandise_total) }))),
+    [pipeline],
+  )
+  const revenueSeries = useMemo(() => {
+    const byShipment = new Map<string, number>()
+    for (const line of pipelineLines) {
+      byShipment.set(
+        line.shipment_id,
+        (byShipment.get(line.shipment_id) ?? 0) + Number(line.sell_price) * Number(line.quantity),
+      )
+    }
+    return seriesWithDelta(
+      pipeline.map((row) => ({ day: dayKey(row.updated_at), amount: byShipment.get(row.id) ?? 0 })),
+    )
+  }, [pipeline, pipelineLines])
+  const unitSeries = useMemo(
+    () =>
+      seriesWithDelta(
+        pipeline.map((row) => {
+          const units = pipelineLines
+            .filter((line) => line.shipment_id === row.id)
+            .reduce((sum, line) => sum + Number(line.quantity) - Number(line.quantity_received), 0)
+          return { day: dayKey(row.updated_at), amount: units }
+        }),
+      ),
+    [pipeline, pipelineLines],
+  )
   const view = useMemo(
     () =>
       rows.map((row) => {
@@ -139,7 +171,7 @@ function Tracker({
         header: ({ column }) => <DataTableColumnHeader column={column} title="Status" />,
         cell: ({ row }) => (
           <div>
-            <Badge variant={row.original.status === "delivered" ? "positive" : "secondary"}>{statusLabel(row.original.status)}</Badge>
+            <StatusBadge status={row.original.status} />
             <div className="text-muted-foreground">{stageLabel(row.original.stage)}</div>
           </div>
         ),
@@ -170,11 +202,34 @@ function Tracker({
   return (
     <div className="flex flex-col gap-4">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <Metric label="Active shipments" value={String(pipeline.length)} />
-        <Metric label="In transit" value={String(rows.filter((row) => row.status === "in_transit").length)} />
-        <Metric label="Pipeline units" value={quantity(pipelineUnits)} />
-        <Metric label="Active pipeline cost" value={money(pipelineCost, business.currency)} />
-        <Metric label="Projected revenue" value={money(projectedRevenue, business.currency)} />
+        <StatCard
+          label="Active shipments"
+          value={String(pipeline.length)}
+          chart={{ kind: "radial", value: pipeline.length, total: Math.max(rows.length, pipeline.length), label: "Active" }}
+        />
+        <StatCard
+          label="In transit"
+          value={String(inTransit)}
+          chart={{ kind: "radial", value: inTransit, total: Math.max(pipeline.length, inTransit), label: "In transit" }}
+        />
+        <StatCard
+          label="Pipeline units"
+          value={quantity(pipelineUnits)}
+          delta={unitSeries.delta}
+          chart={{ kind: "area", values: unitSeries.values }}
+        />
+        <StatCard
+          label="Active pipeline cost"
+          value={money(pipelineCost, business.currency)}
+          delta={costSeries.delta}
+          chart={{ kind: "area", values: costSeries.values }}
+        />
+        <StatCard
+          label="Projected revenue"
+          value={money(projectedRevenue, business.currency)}
+          delta={revenueSeries.delta}
+          chart={{ kind: "area", values: revenueSeries.values }}
+        />
       </div>
       <Card>
         <CardHeader>
@@ -196,13 +251,3 @@ function Tracker({
   )
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardDescription>{label}</CardDescription>
-        <CardTitle>{value}</CardTitle>
-      </CardHeader>
-    </Card>
-  )
-}

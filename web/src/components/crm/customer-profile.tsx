@@ -4,7 +4,9 @@ import Link from "next/link"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { ArrowLeft, Mail, MapPin, Phone } from "lucide-react"
 
+import { StatCard } from "@/components/analytics/stat-card"
 import { CustomerFormDialog, type CustomerDraft } from "@/components/crm/customer-form"
+import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "@/components/ui/sonner"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -41,6 +43,7 @@ import {
 } from "@/lib/crm/lifetime"
 import { money } from "@/lib/flow/format"
 import { useBusiness } from "@/lib/flow/use-business"
+import { dayKey, seriesWithDelta } from "@/lib/stat-series"
 
 type QuoteRecord = {
   id: string
@@ -403,6 +406,23 @@ function Profile({
   const value = lifetimeValue(orders, payments)
   const refunded = orders.filter((order) => refundedOrderIds(payments).has(order.id)).length
   const average = averageCompletedOrder(orders)
+  const valueSeries = seriesWithDelta(
+    orders.map((order) => ({ day: dayKey(order.created_at), amount: Number(order.total) })),
+  )
+  const orderSeries = seriesWithDelta(orders.map((order) => ({ day: dayKey(order.created_at), amount: 1 })))
+  const refundSeries = seriesWithDelta(
+    orders
+      .filter((order) => refundedOrderIds(payments).has(order.id))
+      .map((order) => ({ day: dayKey(order.created_at), amount: 1 })),
+  )
+  const averageSeries = seriesWithDelta(
+    orders
+      .filter((order) => order.status === "completed")
+      .map((order) => ({ day: dayKey(order.created_at), amount: Number(order.total) })),
+  )
+  const dealSeries = seriesWithDelta(
+    deals.map((deal) => ({ day: dayKey(deal.created_at), amount: Number(deal.amount) })),
+  )
 
   return (
     <div className="flex flex-col gap-4">
@@ -443,12 +463,42 @@ function Profile({
         </div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        <Metric label="Lifetime value" value={money(value, currency)} emphasis />
-        <Metric label="Total orders" value={String(orders.length)} />
-        <Metric label="Last order" value={latest ? stamp(latest.created_at) : "—"} hint={latest?.number} />
-        <Metric label="Average completed order" value={money(average, currency)} />
-        <Metric label="Refunded orders" value={String(refunded)} />
-        <Metric label="Open deal value" value={money(openDealValue(deals), currency)} />
+        <StatCard
+          label="Lifetime value"
+          value={money(value, currency)}
+          delta={valueSeries.delta}
+          chart={{ kind: "area", values: valueSeries.values }}
+        />
+        <StatCard
+          label="Total orders"
+          value={String(orders.length)}
+          delta={orderSeries.delta}
+          chart={{ kind: "area", values: orderSeries.values }}
+        />
+        <StatCard
+          label="Last order"
+          value={latest ? stamp(latest.created_at) : "—"}
+          description={latest?.number}
+        />
+        <StatCard
+          label="Average completed order"
+          value={money(average, currency)}
+          delta={averageSeries.delta}
+          chart={{ kind: "area", values: averageSeries.values }}
+        />
+        <StatCard
+          label="Refunded orders"
+          value={String(refunded)}
+          delta={refundSeries.delta}
+          invert
+          chart={{ kind: "area", values: refundSeries.values }}
+        />
+        <StatCard
+          label="Open deal value"
+          value={money(openDealValue(deals), currency)}
+          delta={dealSeries.delta}
+          chart={{ kind: "area", values: dealSeries.values }}
+        />
       </div>
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <Card>
@@ -461,7 +511,7 @@ function Profile({
             <ContactRow icon={Mail} value={customer.email || "No email"} />
             <ContactRow icon={MapPin} value={customer.address || "No address"} />
             <div className="flex flex-wrap gap-1">
-              <Badge variant={customer.status === "active" ? "positive" : "secondary"}>{customer.status}</Badge>
+              <StatusBadge status={customer.status} />
               <Badge variant="outline">{customerTypeLabel(customer.customer_type)}</Badge>
             </div>
             {customer.notes ? <p className="text-sm text-muted-foreground">{customer.notes}</p> : null}
@@ -482,7 +532,7 @@ function Profile({
                   <span className="text-muted-foreground">{stamp(deal.created_at)}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant="secondary">{deal.stage}</Badge>
+                  <StatusBadge status={deal.stage} />
                   <span>{money(Number(deal.amount), currency)}</span>
                 </div>
               </div>
@@ -503,12 +553,13 @@ function Profile({
             onChange={(event) => setQuery(event.target.value)}
           />
         </CardHeader>
-        <CardContent className="px-0">
+        <CardContent>
           {visibleOrders.length === 0 ? (
             <p className="px-4 text-sm text-muted-foreground">
               {orders.length === 0 ? "No orders yet." : "No orders match that search."}
             </p>
           ) : (
+            <div className="overflow-hidden rounded-md border">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -533,15 +584,14 @@ function Profile({
                       <TableCell className="text-right">{money(Number(order.total), currency)}</TableCell>
                       <TableCell className="capitalize">{methods.length > 0 ? methods.join(", ") : "—"}</TableCell>
                       <TableCell>
-                        <Badge variant={status === "refunded" || status === "cancelled" ? "destructive" : status === "completed" ? "positive" : "secondary"}>
-                          {status}
-                        </Badge>
+                        <StatusBadge status={status} />
                       </TableCell>
                     </TableRow>
                   )
                 })}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -608,28 +658,6 @@ function Profile({
         onSubmit={(next) => void save(next)}
       />
     </div>
-  )
-}
-
-function Metric({
-  label,
-  value,
-  hint,
-  emphasis = false,
-}: {
-  label: string
-  value: string
-  hint?: string
-  emphasis?: boolean
-}) {
-  return (
-    <Card size="sm">
-      <CardHeader>
-        <CardDescription>{label}</CardDescription>
-        <CardTitle className={emphasis ? "text-positive" : undefined}>{value}</CardTitle>
-        {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
-      </CardHeader>
-    </Card>
   )
 }
 

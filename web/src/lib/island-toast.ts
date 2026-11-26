@@ -24,12 +24,15 @@ export type IslandToast = {
   id: number
   message: string
   tone: "success" | "error" | "info"
-  receipt?: IslandReceipt
-  confirm?: IslandConfirm
 }
+
+export type IslandCard =
+  | { id: number; kind: "receipt"; receipt: IslandReceipt }
+  | { id: number; kind: "confirm"; message: string; confirm: IslandConfirm }
 
 type IslandState = {
   current: IslandToast | null
+  card: IslandCard | null
   sequence: number
   timer: number
   held: boolean
@@ -40,6 +43,7 @@ type IslandState = {
 
 const islandState: IslandState = ((globalThis as { __comeraIsland?: IslandState }).__comeraIsland ??= {
   current: null,
+  card: null,
   sequence: 0,
   timer: 0,
   held: false,
@@ -47,6 +51,7 @@ const islandState: IslandState = ((globalThis as { __comeraIsland?: IslandState 
   started: 0,
   listeners: new Set(),
 })
+if (!islandState.card) islandState.card = null
 
 function emit() {
   islandState.listeners.forEach((listener) => listener())
@@ -63,7 +68,7 @@ function schedule(ms: number) {
 }
 
 export function holdIsland(next: boolean) {
-  if (!islandState.current?.receipt || next === islandState.held) return
+  if (!islandState.current || next === islandState.held) return
   islandState.held = next
   if (next) {
     islandState.remaining = Math.max(0, islandState.remaining - (Date.now() - islandState.started))
@@ -73,10 +78,10 @@ export function holdIsland(next: boolean) {
   schedule(Math.max(islandState.remaining, 400))
 }
 
-function show(message: string, tone: IslandToast["tone"], receipt?: IslandReceipt, ms = 3200) {
+function show(message: string, tone: IslandToast["tone"], ms = 3200) {
   islandState.held = false
   islandState.sequence += 1
-  islandState.current = { id: islandState.sequence, message, tone, receipt }
+  islandState.current = { id: islandState.sequence, message, tone }
   emit()
   schedule(ms)
 }
@@ -86,7 +91,10 @@ export function pushIslandToast(message: string, tone: IslandToast["tone"]) {
 }
 
 export function pushIslandReceipt(receipt: IslandReceipt) {
-  show("Completed", "success", receipt, 6000)
+  show("Completed", "success")
+  islandState.sequence += 1
+  islandState.card = { id: islandState.sequence, kind: "receipt", receipt }
+  emit()
 }
 
 export function pushIslandConfirm(
@@ -94,13 +102,11 @@ export function pushIslandConfirm(
   run: () => void,
   options?: { label?: string; destructive?: boolean },
 ) {
-  window.clearTimeout(islandState.timer)
-  islandState.held = true
   islandState.sequence += 1
-  islandState.current = {
+  islandState.card = {
     id: islandState.sequence,
+    kind: "confirm",
     message,
-    tone: "info",
     confirm: { label: options?.label ?? "Confirm", destructive: options?.destructive, run },
   }
   emit()
@@ -113,13 +119,20 @@ export function dismissIsland() {
   emit()
 }
 
+export function dismissIslandCard() {
+  islandState.card = null
+  emit()
+}
+
+function subscribe(listener: () => void) {
+  islandState.listeners.add(listener)
+  return () => islandState.listeners.delete(listener)
+}
+
 export function useIslandToast() {
-  return useSyncExternalStore(
-    (listener) => {
-      islandState.listeners.add(listener)
-      return () => islandState.listeners.delete(listener)
-    },
-    () => islandState.current,
-    () => null,
-  )
+  return useSyncExternalStore(subscribe, () => islandState.current, () => null)
+}
+
+export function useIslandCard() {
+  return useSyncExternalStore(subscribe, () => islandState.card, () => null)
 }

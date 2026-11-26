@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import type { ColumnDef } from "@tanstack/react-table"
 
-import { PosScreen, statusVariant } from "@/components/pos/pos-screen"
+import { StatCard } from "@/components/analytics/stat-card"
+import { PosScreen } from "@/components/pos/pos-screen"
+import { StatusBadge } from "@/components/status-badge"
 import { DataTable } from "@/components/data-table/data-table"
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header"
 import type { DataTableFeatures } from "@/components/data-table/data-table-features"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
@@ -30,6 +31,7 @@ import { toast } from "@/components/ui/sonner"
 import { money } from "@/lib/flow/format"
 import { callRpc } from "@/lib/flow/rpc"
 import type { BusinessRecord, FlowClient } from "@/lib/flow/use-business"
+import { dayKey, seriesWithDelta } from "@/lib/stat-series"
 
 type SessionRow = {
   id: string
@@ -270,6 +272,26 @@ function Sessions({ business, supabase }: { business: BusinessRecord; supabase: 
     }),
     { sales: 0, cash: 0, bank: 0, card: 0 },
   )
+  const sessionSeries = useMemo(
+    () => seriesWithDelta(visible.map((row) => ({ day: dayKey(row.openedAt), amount: 1 }))),
+    [visible],
+  )
+  const salesSeries = useMemo(
+    () => seriesWithDelta(visible.map((row) => ({ day: dayKey(row.openedAt), amount: row.sales }))),
+    [visible],
+  )
+  const cashSeries = useMemo(
+    () => seriesWithDelta(visible.map((row) => ({ day: dayKey(row.openedAt), amount: row.cash }))),
+    [visible],
+  )
+  const bankSeries = useMemo(
+    () => seriesWithDelta(visible.map((row) => ({ day: dayKey(row.openedAt), amount: row.bank }))),
+    [visible],
+  )
+  const cardSeries = useMemo(
+    () => seriesWithDelta(visible.map((row) => ({ day: dayKey(row.openedAt), amount: row.card }))),
+    [visible],
+  )
   useEffect(() => {
     void supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null))
   }, [supabase])
@@ -377,14 +399,14 @@ function Sessions({ business, supabase }: { business: BusinessRecord; supabase: 
       { accessorKey: "openedAt", header: ({ column }) => <DataTableColumnHeader column={column} title="Open time" /> },
       { accessorKey: "closedAt", header: ({ column }) => <DataTableColumnHeader column={column} title="Close time" /> },
       { accessorKey: "duration", header: ({ column }) => <DataTableColumnHeader column={column} title="Duration" /> },
-      { accessorKey: "sales", header: ({ column }) => <DataTableColumnHeader column={column} title="Total sales" />, cell: ({ row }) => <div className="text-right tabular-nums">{money(row.original.sales, business.currency)}</div> },
-      { accessorKey: "cash", header: ({ column }) => <DataTableColumnHeader column={column} title="Cash" />, cell: ({ row }) => <div className="text-right tabular-nums">{money(row.original.cash, business.currency)}</div> },
-      { accessorKey: "bank", header: ({ column }) => <DataTableColumnHeader column={column} title="Bank" />, cell: ({ row }) => <div className="text-right tabular-nums">{money(row.original.bank, business.currency)}</div> },
-      { accessorKey: "card", header: ({ column }) => <DataTableColumnHeader column={column} title="Card" />, cell: ({ row }) => <div className="text-right tabular-nums">{money(row.original.card, business.currency)}</div> },
-      { accessorKey: "expected", header: ({ column }) => <DataTableColumnHeader column={column} title="Expected" />, cell: ({ row }) => <div className="text-right tabular-nums">{row.original.expected === null ? "—" : money(row.original.expected, business.currency)}</div> },
-      { accessorKey: "counted", header: ({ column }) => <DataTableColumnHeader column={column} title="Counted" />, cell: ({ row }) => <div className="text-right tabular-nums">{row.original.counted === null ? "—" : money(row.original.counted, business.currency)}</div> },
-      { accessorKey: "difference", header: ({ column }) => <DataTableColumnHeader column={column} title="Over / short" />, cell: ({ row }) => <div className="text-right tabular-nums">{row.original.difference === null ? "—" : row.original.difference === 0 ? "Even" : money(row.original.difference, business.currency)}</div> },
-      { accessorKey: "status", header: ({ column }) => <DataTableColumnHeader column={column} title="Status" />, cell: ({ row }) => <Badge variant={statusVariant(row.original.status)}>{row.original.status}</Badge> },
+      { accessorKey: "sales", meta: { align: "right" }, header: ({ column }) => <DataTableColumnHeader column={column} title="Total sales" />, cell: ({ row }) => <div className="text-right tabular-nums">{money(row.original.sales, business.currency)}</div> },
+      { accessorKey: "cash", meta: { align: "right" }, header: ({ column }) => <DataTableColumnHeader column={column} title="Cash" />, cell: ({ row }) => <div className="text-right tabular-nums">{money(row.original.cash, business.currency)}</div> },
+      { accessorKey: "bank", meta: { align: "right" }, header: ({ column }) => <DataTableColumnHeader column={column} title="Bank" />, cell: ({ row }) => <div className="text-right tabular-nums">{money(row.original.bank, business.currency)}</div> },
+      { accessorKey: "card", meta: { align: "right" }, header: ({ column }) => <DataTableColumnHeader column={column} title="Card" />, cell: ({ row }) => <div className="text-right tabular-nums">{money(row.original.card, business.currency)}</div> },
+      { accessorKey: "expected", meta: { align: "right" }, header: ({ column }) => <DataTableColumnHeader column={column} title="Expected" />, cell: ({ row }) => <div className="text-right tabular-nums">{row.original.expected === null ? "—" : money(row.original.expected, business.currency)}</div> },
+      { accessorKey: "counted", meta: { align: "right" }, header: ({ column }) => <DataTableColumnHeader column={column} title="Counted" />, cell: ({ row }) => <div className="text-right tabular-nums">{row.original.counted === null ? "—" : money(row.original.counted, business.currency)}</div> },
+      { accessorKey: "difference", meta: { align: "right" }, header: ({ column }) => <DataTableColumnHeader column={column} title="Over / short" />, cell: ({ row }) => <div className="text-right tabular-nums">{row.original.difference === null ? "—" : row.original.difference === 0 ? "Even" : money(row.original.difference, business.currency)}</div> },
+      { accessorKey: "status", header: ({ column }) => <DataTableColumnHeader column={column} title="Status" />, cell: ({ row }) => <StatusBadge status={row.original.status} /> },
       {
         id: "actions",
         header: "",
@@ -437,20 +459,36 @@ function Sessions({ business, supabase }: { business: BusinessRecord; supabase: 
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        {[
-          ["Sessions", String(visible.length)],
-          ["Total sales", money(totals.sales, business.currency)],
-          ["Cash", money(totals.cash, business.currency)],
-          ["Bank", money(totals.bank, business.currency)],
-          ["Card", money(totals.card, business.currency)],
-        ].map(([label, value]) => (
-          <Card key={label} className="py-4">
-            <CardContent className="px-4">
-              <div className="text-xs tracking-wide text-muted-foreground uppercase">{label}</div>
-              <div className="mt-1 text-lg font-medium tabular-nums">{value}</div>
-            </CardContent>
-          </Card>
-        ))}
+        <StatCard
+          label="Sessions"
+          value={String(visible.length)}
+          delta={sessionSeries.delta}
+          chart={{ kind: "area", values: sessionSeries.values }}
+        />
+        <StatCard
+          label="Total sales"
+          value={money(totals.sales, business.currency)}
+          delta={salesSeries.delta}
+          chart={{ kind: "area", values: salesSeries.values }}
+        />
+        <StatCard
+          label="Cash"
+          value={money(totals.cash, business.currency)}
+          delta={cashSeries.delta}
+          chart={{ kind: "radial", value: totals.cash, total: totals.sales || totals.cash, label: "Cash" }}
+        />
+        <StatCard
+          label="Bank"
+          value={money(totals.bank, business.currency)}
+          delta={bankSeries.delta}
+          chart={{ kind: "radial", value: totals.bank, total: totals.sales || totals.bank, label: "Bank" }}
+        />
+        <StatCard
+          label="Card"
+          value={money(totals.card, business.currency)}
+          delta={cardSeries.delta}
+          chart={{ kind: "radial", value: totals.card, total: totals.sales || totals.card, label: "Card" }}
+        />
       </div>
 
       <Card>
@@ -541,7 +579,7 @@ function Sessions({ business, supabase }: { business: BusinessRecord; supabase: 
                 <div key={sale.id} className="flex items-center justify-between gap-3">
                   <div>
                     <p className="font-medium">{sale.number}</p>
-                    <p className="text-muted-foreground capitalize">{sale.status}</p>
+                    <StatusBadge status={sale.status} />
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="tabular-nums">{money(Number(sale.total), business.currency)}</span>

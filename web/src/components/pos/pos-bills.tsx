@@ -7,8 +7,8 @@ import { DataTable } from "@/components/data-table/data-table"
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header"
 import type { DataTableFeatures } from "@/components/data-table/data-table-features"
 import { DatePicker } from "@/components/date-picker"
-import { PosScreen, statusVariant } from "@/components/pos/pos-screen"
-import { Badge } from "@/components/ui/badge"
+import { PosScreen } from "@/components/pos/pos-screen"
+import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import {
@@ -252,9 +252,9 @@ function Bills({ business, supabase }: { business: BusinessRecord; supabase: Flo
       { id: "customer", header: "Customer", accessorFn: (row) => (row.customer_id ? customerMap.get(row.customer_id) ?? "Customer" : "Walk-in") },
       { id: "items", header: "Items", accessorFn: (row) => (lineMap.get(row.id) ?? []).join(", ") || "—", cell: ({ getValue }) => <span className="block max-w-64 truncate">{getValue<string>()}</span> },
       { id: "method", header: "Payment method", accessorFn: (row) => (methodMap.get(row.id) ?? []).join(", ") || "—", cell: ({ getValue }) => <span className="capitalize">{getValue<string>()}</span> },
-      { accessorKey: "total", header: ({ column }) => <DataTableColumnHeader column={column} title="Total" />, cell: ({ row }) => <div className="text-right tabular-nums">{money(Number(row.original.total), business.currency)}</div> },
+      { accessorKey: "total", meta: { align: "right" }, header: ({ column }) => <DataTableColumnHeader column={column} title="Total" />, cell: ({ row }) => <div className="text-right tabular-nums">{money(Number(row.original.total), business.currency)}</div> },
       { id: "when", header: "Timestamp", accessorFn: (row) => stamp(row.issued_at ?? row.created_at) },
-      { accessorKey: "status", header: "Status", cell: ({ row }) => <Badge variant={statusVariant(row.original.status)}>{row.original.status}</Badge> },
+      { accessorKey: "status", header: "Status", cell: ({ row }) => <StatusBadge status={row.original.status} /> },
       {
         id: "actions",
         header: "",

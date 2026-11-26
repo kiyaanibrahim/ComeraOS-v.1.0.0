@@ -7,9 +7,9 @@ import type { ColumnDef } from "@tanstack/react-table"
 import { DataTable } from "@/components/data-table/data-table"
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header"
 import type { DataTableFeatures } from "@/components/data-table/data-table-features"
-import { documentNumber, PosScreen, statusVariant } from "@/components/pos/pos-screen"
+import { documentNumber, PosScreen } from "@/components/pos/pos-screen"
+import { StatusBadge } from "@/components/status-badge"
 import { UnsavedChangesDialog, useUnsavedChanges } from "@/components/unsaved-changes"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
@@ -212,9 +212,9 @@ function Quotes({
       accessorFn: (row) => (row.customer_id ? customerName.get(row.customer_id) ?? "Customer" : "Walk-in"),
       cell: ({ getValue }) => getValue<string>(),
     },
-    { accessorKey: "items", header: ({ column }) => <DataTableColumnHeader column={column} title="Items" />, cell: ({ row }) => <div className="text-right tabular-nums">{row.original.items}</div> },
-    { accessorKey: "total", header: ({ column }) => <DataTableColumnHeader column={column} title="Total" />, cell: ({ row }) => <div className="text-right tabular-nums">{money(row.original.total, business.currency)}</div> },
-    { accessorKey: "status", header: ({ column }) => <DataTableColumnHeader column={column} title="Status" />, cell: ({ row }) => <Badge variant={statusVariant(row.original.status)}>{row.original.status}</Badge> },
+    { accessorKey: "items", meta: { align: "right" }, header: ({ column }) => <DataTableColumnHeader column={column} title="Items" />, cell: ({ row }) => <div className="text-right tabular-nums">{row.original.items}</div> },
+    { accessorKey: "total", meta: { align: "right" }, header: ({ column }) => <DataTableColumnHeader column={column} title="Total" />, cell: ({ row }) => <div className="text-right tabular-nums">{money(row.original.total, business.currency)}</div> },
+    { accessorKey: "status", header: ({ column }) => <DataTableColumnHeader column={column} title="Status" />, cell: ({ row }) => <StatusBadge status={row.original.status} /> },
     {
       id: "actions",
       header: "Action",

@@ -1,17 +1,13 @@
 "use client"
 
+import { statusVariant } from "@/components/status-badge"
 import { useBusiness, type BusinessRecord, type FlowClient } from "@/lib/flow/use-business"
+import { randomUUID } from "@/lib/utils"
 
-export function statusVariant(status: string): "positive" | "secondary" | "destructive" | "outline" {
-  const value = status.toLowerCase()
-  if (["open", "succeeded", "accepted", "issued", "paid", "active", "completed"].includes(value)) return "positive"
-  if (["failed", "void", "cancelled", "canceled", "declined"].includes(value)) return "destructive"
-  if (["closed", "draft"].includes(value)) return "secondary"
-  return "outline"
-}
+export { statusVariant }
 
 export function documentNumber(prefix: string) {
-  const token = crypto.randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase()
+  const token = randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase()
   return `${prefix}-${token}`
 }
 

@@ -4,8 +4,8 @@ import Link from "next/link"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { CashCounter, countPayload, countTotal, emptyCount } from "@/components/pos/pos-cash"
-import { PosScreen, statusVariant } from "@/components/pos/pos-screen"
-import { Badge } from "@/components/ui/badge"
+import { PosScreen } from "@/components/pos/pos-screen"
+import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { toast } from "@/components/ui/sonner"
@@ -348,9 +348,7 @@ function RegisterDesk({ business, supabase }: { business: BusinessRecord; supaba
                   : "No register yet."}
               </CardDescription>
             </div>
-            <Badge variant={registerOpen ? statusVariant("open") : statusVariant("closed")}>
-              {registerOpen ? "Open" : "Closed"}
-            </Badge>
+            <StatusBadge status={registerOpen ? "open" : "closed"} />
           </div>
           {registers.length > 0 ? (
             <div className="grid gap-2">

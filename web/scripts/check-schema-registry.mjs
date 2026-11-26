@@ -46,7 +46,7 @@ for (const route of pageRoutes) {
     continue;
   }
   for (const table of tables) {
-    const created = new RegExp(`create table public\\.${table}\\b`, "i");
+    const created = new RegExp(`create table(?:\\s+if\\s+not\\s+exists)? public\\.${table}\\b`, "i");
     const renamed = new RegExp(`rename to ${table}\\b`, "i");
     if (!created.test(sql) && !renamed.test(sql)) {
       errors.push(`${route} lists ${table}, but no migration creates public.${table}`);

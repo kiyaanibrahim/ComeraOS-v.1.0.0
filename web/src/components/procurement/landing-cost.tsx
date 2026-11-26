@@ -184,7 +184,8 @@ function ShipmentSheet({
           pool {money(sheet.clearance, currency)}
         </CardDescription>
       </CardHeader>
-      <CardContent className="overflow-x-auto">
+      <CardContent>
+        <div className="overflow-hidden rounded-md border">
         <Table>
           <TableHeader>
             <TableRow>
@@ -218,6 +219,7 @@ function ShipmentSheet({
             })}
           </TableBody>
         </Table>
+        </div>
       </CardContent>
     </Card>
   )

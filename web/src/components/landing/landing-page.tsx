@@ -80,7 +80,7 @@ const plans = [
       "Everything in Starter",
       "Buying and the shipment tracker",
       "CRM, locations, and customers",
-      "Expenses, capital, accounting, and reporting",
+      "Revenue, expenses, capital, accounting, and reporting",
       "Staff and billing",
     ],
     className: "bg-primary text-primary-foreground",

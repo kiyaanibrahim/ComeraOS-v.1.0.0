@@ -1,12 +1,6 @@
 import { Suspense } from "react"
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { RankedBarCard, SeriesAreaCard } from "@/components/analytics/stat-card"
 import { loadVisibleBusiness } from "@/lib/load-business"
 import { createClient } from "@/lib/supabase/server"
 
@@ -68,21 +62,54 @@ async function Analytics({ params }: { params: Promise<{ businessId: string }> }
     day,
     total: sales.filter((order) => dayOf(order.created_at) === day).reduce((sum, order) => sum + Number(order.total), 0),
   }))
-  const peak = Math.max(...series.map((item) => item.total), 1)
   const recentIds = sales.filter((order) => dayOf(order.created_at) >= start).map((order) => order.id).slice(0, 200)
   const lines = row && recentIds.length
-    ? await supabase.from("order_lines").select("description, quantity, line_total").eq("business_id", row.id).in("order_id", recentIds)
+    ? await supabase
+        .from("order_lines")
+        .select("description, quantity, line_total, unit_cost, product_id")
+        .eq("business_id", row.id)
+        .in("order_id", recentIds)
     : { data: [] }
-  const products = new Map<string, { quantity: number; total: number }>()
+  const catalog =
+    row && (lines.data?.length ?? 0) > 0
+      ? await supabase
+          .from("products")
+          .select("id, name, parent_id, product_type")
+          .eq("business_id", row.id)
+          .in(
+            "id",
+            [...new Set((lines.data ?? []).map((line) => line.product_id).filter(Boolean) as string[])],
+          )
+      : { data: [] }
+  const catalogById = new Map((catalog.data ?? []).map((product) => [product.id, product]))
+  const parentIds = [...new Set(
+    (catalog.data ?? [])
+      .map((product) => product.parent_id)
+      .filter(Boolean) as string[],
+  )]
+  const parents =
+    row && parentIds.length
+      ? await supabase.from("products").select("id, name").eq("business_id", row.id).in("id", parentIds)
+      : { data: [] }
+  const parentName = new Map((parents.data ?? []).map((product) => [product.id, product.name]))
+  const products = new Map<string, { quantity: number; total: number; cost: number }>()
   for (const line of lines.data ?? []) {
-    const name = line.description || "Product"
-    const current = products.get(name) ?? { quantity: 0, total: 0 }
+    const product = line.product_id ? catalogById.get(line.product_id) : null
+    const name = product?.parent_id
+      ? parentName.get(product.parent_id) || product.name
+      : product?.name || line.description || "Product"
+    const current = products.get(name) ?? { quantity: 0, total: 0, cost: 0 }
     current.quantity += Number(line.quantity)
     current.total += Number(line.line_total)
+    current.cost += Number(line.quantity) * Number(line.unit_cost ?? 0)
     products.set(name, current)
   }
   const top = [...products.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, 8)
   const money = new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 })
+  const chartPoints = series.map((item) => ({
+    label: new Date(`${item.day}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+    value: item.total,
+  }))
 
   return (
     <div className="flex flex-col gap-4">
@@ -91,44 +118,17 @@ async function Analytics({ params }: { params: Promise<{ businessId: string }> }
         <p className="text-sm text-muted-foreground">Completed sales for {business.name} over the last 14 days.</p>
       </div>
       <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-        <Card>
-          <CardHeader>
-            <CardTitle>Sales</CardTitle>
-            <CardDescription>Completed sales, by day.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex h-36 items-end gap-1">
-              {series.map((item) => (
-                <div key={item.day} className="flex h-full flex-1 flex-col justify-end" title={`${item.day} ${money.format(item.total)}`}>
-                  <div
-                    className="rounded-sm bg-foreground/80"
-                    style={{ height: `${Math.max(4, Math.round((item.total / peak) * 100))}%` }}
-                  />
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Top products</CardTitle>
-            <CardDescription>By sales in this range.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            {top.length ? (
-              top.map(([name, figures]) => (
-                <div key={name} className="flex items-baseline justify-between gap-3 text-sm">
-                  <span className="truncate">{name}</span>
-                  <span className="shrink-0 tabular-nums text-muted-foreground">
-                    {figures.quantity} · {money.format(figures.total)}
-                  </span>
-                </div>
-              ))
-            ) : (
-              <p className="text-sm text-muted-foreground">No completed sales in this range.</p>
-            )}
-          </CardContent>
-        </Card>
+        <SeriesAreaCard label="Sales" description="Completed sales, by day." points={chartPoints} />
+        <RankedBarCard
+          label="Top products"
+          description="By sales in this range."
+          items={top.map(([name, figures]) => ({
+            label: name,
+            value: figures.total,
+            display: `${figures.quantity} · ${money.format(figures.total)} · margin ${money.format(figures.total - figures.cost)}`,
+          }))}
+          empty="No completed sales in this range."
+        />
       </div>
     </div>
   )

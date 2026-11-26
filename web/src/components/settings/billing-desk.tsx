@@ -6,6 +6,7 @@ import type { ColumnDef } from "@tanstack/react-table"
 import { DataTable } from "@/components/data-table/data-table"
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header"
 import type { DataTableFeatures } from "@/components/data-table/data-table-features"
+import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -142,7 +143,7 @@ export function BillingDesk({ businessKey }: { businessKey: string }) {
       {
         accessorKey: "status",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Status" />,
-        cell: ({ row }) => <span className="capitalize">{row.original.status.replaceAll("_", " ")}</span>,
+        cell: ({ row }) => <StatusBadge status={row.original.status} />,
       },
       {
         accessorKey: "amount",

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 
 import { PosScreen } from "@/components/pos/pos-screen"
-import { Badge } from "@/components/ui/badge"
+import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
@@ -86,7 +86,7 @@ function List({ business, supabase }: { business: BusinessRecord; supabase: Flow
                 <p className="text-muted-foreground">{new Date(row.created_at).toLocaleString()}</p>
               </div>
               <div className="flex items-center gap-3">
-                <Badge variant="outline" className="capitalize">{row.status}</Badge>
+                <StatusBadge status={row.status} />
                 <span className="tabular-nums">{money(Number(row.total), business.currency)}</span>
               </div>
             </div>

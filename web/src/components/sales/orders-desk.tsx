@@ -7,8 +7,8 @@ import type { ColumnDef } from "@tanstack/react-table"
 import { DataTable } from "@/components/data-table/data-table"
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header"
 import type { DataTableFeatures } from "@/components/data-table/data-table-features"
-import { PosScreen, statusVariant } from "@/components/pos/pos-screen"
-import { Badge } from "@/components/ui/badge"
+import { PosScreen } from "@/components/pos/pos-screen"
+import { StatusBadge } from "@/components/status-badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
 import { toast } from "@/components/ui/sonner"
@@ -126,9 +126,10 @@ function OrderList({
       {
         accessorKey: "status",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Status" />,
-        cell: ({ row }) => <Badge variant={statusVariant(row.original.status)}>{statusLabel(row.original.status)}</Badge>,
+        cell: ({ row }) => <StatusBadge status={row.original.status} />,
       },
       {
+        meta: { align: "right" },
         accessorKey: "total",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Total" />,
         cell: ({ row }) => <div className="text-right tabular-nums">{money(Number(row.original.total), business.currency)}</div>,

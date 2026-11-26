@@ -33,6 +33,7 @@ export function NavMain({
     icon?: React.ReactNode
     isActive?: boolean
     drill?: boolean
+    onSelect?: () => void
     items?: {
       title: string
       url: string
@@ -42,7 +43,7 @@ export function NavMain({
   return (
     <SidebarGroup>
       {label ? <SidebarGroupLabel>{label}</SidebarGroupLabel> : null}
-      <SidebarMenu>
+      <SidebarMenu className="gap-1">
         {items.map((item) => (
           <NavMainItem key={item.title} item={item} />
         ))}
@@ -60,6 +61,7 @@ function NavMainItem({
     icon?: React.ReactNode
     isActive?: boolean
     drill?: boolean
+    onSelect?: () => void
     items?: {
       title: string
       url: string
@@ -78,13 +80,14 @@ function NavMainItem({
   }, [sectionActive])
 
   if (!item.items?.length) {
-    const active = isNavActive(pathname, item.url, [item.url])
+    const active = item.isActive ?? isNavActive(pathname, item.url, [item.url])
     return (
       <SidebarMenuItem>
         <SidebarMenuButton
           tooltip={item.title}
           isActive={active}
-          render={<Link href={item.url} />}
+          onClick={item.onSelect}
+          render={item.onSelect ? undefined : <Link href={item.url} />}
         >
           {item.icon}
           <span>{item.title}</span>

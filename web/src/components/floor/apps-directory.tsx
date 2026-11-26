@@ -1,7 +1,7 @@
 "use client"
 
 import { PosScreen } from "@/components/pos/pos-screen"
-import { Badge } from "@/components/ui/badge"
+import { StatusBadge } from "@/components/status-badge"
 import { Card, CardContent } from "@/components/ui/card"
 
 const apps = [
@@ -20,7 +20,7 @@ export function AppsDirectory({ businessKey }: { businessKey: string }) {
               <CardContent className="flex flex-col gap-2 px-4">
                 <p className="font-medium">{app.name}</p>
                 <p className="text-xs tracking-wide text-muted-foreground uppercase">{business.name}</p>
-                <Badge variant="secondary">{app.status}</Badge>
+                <StatusBadge status={app.status} capitalize={false} />
               </CardContent>
             </Card>
           ))}

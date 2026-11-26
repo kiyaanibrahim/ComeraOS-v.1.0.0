@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 
+import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -159,7 +160,7 @@ export function RegistersDesk({ businessKey }: { businessKey: string }) {
                     {placeName(row.location_id)} · stock from {placeName(row.warehouse_id)}
                   </p>
                 </div>
-                <p className="text-muted-foreground capitalize">{row.status}</p>
+                <StatusBadge status={row.status} />
               </div>
             ))}
           </CardContent>

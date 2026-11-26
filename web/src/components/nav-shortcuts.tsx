@@ -10,6 +10,7 @@ import {
   LayoutDashboardIcon,
   MonitorIcon,
   MoreHorizontalIcon,
+  PackageIcon,
   PieChartIcon,
   PlusIcon,
   ScrollTextIcon,
@@ -58,6 +59,7 @@ const sectionIcons: Record<string, LucideIcon> = {
   Sales: ShoppingCartIcon,
   Customers: UsersIcon,
   Procurement: TruckIcon,
+  Products: PackageIcon,
   Inventory: BoxesIcon,
   Financials: LandmarkIcon,
   Analytics: PieChartIcon,
@@ -144,7 +146,7 @@ export function NavShortcuts({ businessKey }: { businessKey: string }) {
   return (
     <SidebarGroup className="group-data-[collapsible=icon]:hidden">
       <SidebarGroupLabel>Shortcuts</SidebarGroupLabel>
-      <SidebarMenu>
+      <SidebarMenu className="gap-1">
         {visible.map((item) => (
           <SidebarMenuItem key={item.path}>
             <SidebarMenuButton isActive={pathname === `/app/${businessKey}/${item.path}`} render={<Link href={`/app/${businessKey}/${item.path}`} />}>

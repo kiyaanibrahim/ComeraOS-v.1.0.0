@@ -6,6 +6,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from "recharts"
 
+import { StatCard } from "@/components/analytics/stat-card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -46,6 +47,7 @@ import { Label } from "@/components/ui/label"
 import { toast } from "@/components/ui/sonner"
 import { formatMoney, slugFromName } from "@/lib/businesses"
 import { pushIslandConfirm, pushIslandToast } from "@/lib/island-toast"
+import { percentChange } from "@/lib/stat-series"
 import { createClient } from "@/lib/supabase/client"
 
 type BusinessRow = {
@@ -118,13 +120,6 @@ function MetricSpark({ values, color }: { values: number[]; color: string }) {
   )
 }
 
-function TrendBadge({ trend }: { trend: { label: string; tone: TrendTone } | null }) {
-  if (!trend) return null
-  if (trend.tone === "positive") return <Badge variant="positive">{trend.label}</Badge>
-  if (trend.tone === "problem") return <Badge variant="destructive">{trend.label}</Badge>
-  return <Badge variant="outline" className="border-transparent bg-amber-400/15 text-amber-400">{trend.label}</Badge>
-}
-
 function localDayKey(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, "0")
   const day = String(date.getDate()).padStart(2, "0")
@@ -188,22 +183,6 @@ function totalSales(sales: CompletedSale[]) {
 
 function customerCount(sales: CompletedSale[]) {
   return new Set(sales.map((sale) => sale.customer_id).filter((id) => id !== null)).size
-}
-
-type TrendTone = "positive" | "attention" | "problem"
-
-function trendLine(current: number, previous: number) {
-  if (current === 0 && previous === 0) return null
-  if (previous <= 0) return { label: "Up", tone: "positive" as TrendTone }
-  const ratio = (current - previous) / previous
-  const percent = Math.abs(Math.round(ratio * 100))
-  if (ratio >= 0) {
-    return { label: percent === 0 ? "0%" : percent > 999 ? "Up" : `+${percent}%`, tone: "positive" as TrendTone }
-  }
-  return {
-    label: percent > 999 ? "Down" : `-${percent}%`,
-    tone: (ratio > -0.2 ? "attention" : "problem") as TrendTone,
-  }
 }
 
 function greeting(displayName: string) {
@@ -370,30 +349,26 @@ function PortfolioSummary({
     {
       label: "Sales",
       value: formatMoney(totalSales(windowSales)),
-      trend: trendLine(totalSales(windowSales), totalSales(earlierSales)),
+      delta: percentChange(totalSales(windowSales), totalSales(earlierSales)),
       spark: daily(totalSales),
-      color: "var(--chart-1)",
     },
     {
       label: "Orders",
       value: String(windowSales.length),
-      trend: trendLine(windowSales.length, earlierSales.length),
+      delta: percentChange(windowSales.length, earlierSales.length),
       spark: daily((rows) => rows.length),
-      color: "var(--chart-2)",
     },
     {
       label: "Customers",
       value: String(customers),
-      trend: trendLine(customers, customerCount(earlierSales)),
+      delta: percentChange(customers, customerCount(earlierSales)),
       spark: daily(customerCount),
-      color: "var(--chart-3)",
     },
     {
       label: "Average order",
       value: formatMoney(average(windowSales)),
-      trend: trendLine(average(windowSales), average(earlierSales)),
+      delta: percentChange(average(windowSales), average(earlierSales)),
       spark: daily(average),
-      color: "var(--chart-4)",
     },
   ]
 
@@ -435,16 +410,13 @@ function PortfolioSummary({
         <>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {metrics.map((metric) => (
-              <Card key={metric.label}>
-                <CardHeader className="flex flex-row items-start justify-between gap-3">
-                  <div className="flex min-w-0 flex-col gap-1">
-                    <CardDescription>{metric.label}</CardDescription>
-                    <CardTitle className="text-2xl tabular-nums">{metric.value}</CardTitle>
-                    <TrendBadge trend={metric.trend} />
-                  </div>
-                  <MetricSpark values={metric.spark} color={metric.color} />
-                </CardHeader>
-              </Card>
+              <StatCard
+                key={metric.label}
+                label={metric.label}
+                value={metric.value}
+                delta={metric.delta}
+                chart={{ kind: "area", values: metric.spark }}
+              />
             ))}
           </div>
           <div className="grid gap-4 lg:grid-cols-3">

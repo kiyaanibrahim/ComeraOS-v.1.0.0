@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { FlowFrame } from "@/components/flow/flow-frame"
 import { chargesToDrafts, type ChargeDraft } from "@/components/procurement/charge-drafts"
 import { FieldCard, FieldGrid, FormSection, ValueCard } from "@/components/procurement/form-row"
+import { StatusBadge } from "@/components/status-badge"
 import { UnsavedChangesDialog, useUnsavedChanges } from "@/components/unsaved-changes"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -32,6 +33,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   Timeline,
   TimelineContent,
@@ -195,14 +197,6 @@ function packageStatus(value: string) {
   return "Actual"
 }
 
-function StatusBadge({ status }: { status: string }) {
-  if (status === "Actual") return <Badge variant="positive">{status}</Badge>
-  return (
-    <Badge variant="outline" className="text-muted-foreground">
-      {status}
-    </Badge>
-  )
-}
 
 export function ShipmentDetail({
   businessKey,
@@ -740,34 +734,32 @@ function Detail({
         </CardHeader>
         <CollapsibleContent>
         <CardContent>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="text-left text-muted-foreground">
-                  <tr>
-                    <th className="py-2 pr-3 font-medium">SKU / Product</th>
-                    <th className="py-2 pr-3 font-medium">Flavor</th>
-                    <th className="py-2 pr-3 font-medium">Qty</th>
-                    <th className="py-2 pr-3 font-medium">Unit Weight</th>
-                    <th className="py-2 pr-3 font-medium">Line Weight</th>
-                    <th className="py-2 pr-3 font-medium">Landed Cost / Unit</th>
-                    <th className="py-2 font-medium">Batch Reference</th>
-                  </tr>
-                </thead>
-                <tbody>
+            <div className="overflow-hidden rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>SKU / Product</TableHead>
+                    <TableHead>Flavor</TableHead>
+                    <TableHead>Qty</TableHead>
+                    <TableHead>Unit Weight</TableHead>
+                    <TableHead>Line Weight</TableHead>
+                    <TableHead>Landed Cost / Unit</TableHead>
+                    <TableHead>Batch Reference</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {lines.map((line) => (
-                    <tr key={line.id} className="border-t">
-                      <td className="py-2 pr-3">
+                    <TableRow key={line.id}>
+                      <TableCell>
                         <div className="font-medium">{line.name}</div>
                         <div className="text-muted-foreground">{line.sku}</div>
-                      </td>
-                      <td className="py-2 pr-3 text-muted-foreground">—</td>
-                      <td className="py-2 pr-3">{quantity(Number(line.quantity))}</td>
-                      <td className="py-2 pr-3">{quantity(Number(line.unit_weight_grams))} g</td>
-                      <td className="py-2 pr-3">
-                        {quantity(Number(line.quantity) * Number(line.unit_weight_grams))} g
-                      </td>
-                      <td className="py-2 pr-3">{money(Number(line.unit_landing_cost), business.currency)}</td>
-                      <td className="py-2">
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">—</TableCell>
+                      <TableCell>{quantity(Number(line.quantity))}</TableCell>
+                      <TableCell>{quantity(Number(line.unit_weight_grams))} g</TableCell>
+                      <TableCell>{quantity(Number(line.quantity) * Number(line.unit_weight_grams))} g</TableCell>
+                      <TableCell>{money(Number(line.unit_landing_cost), business.currency)}</TableCell>
+                      <TableCell>
                         <Input
                           className="w-36"
                           value={batchRefs[line.id] || autoBatchReference(line.id)}
@@ -782,11 +774,11 @@ function Detail({
                             }))
                           }
                         />
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
         </CardContent>
         </CollapsibleContent>
