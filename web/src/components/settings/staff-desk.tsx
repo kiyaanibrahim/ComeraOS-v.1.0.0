@@ -8,6 +8,7 @@ import { DataTable } from "@/components/data-table/data-table"
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header"
 import type { DataTableFeatures } from "@/components/data-table/data-table-features"
 import { DataTableRowActions } from "@/components/data-table/data-table-row-actions"
+import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -187,7 +188,9 @@ export function StaffDesk({ businessKey }: { businessKey: string }) {
       {
         accessorKey: "status",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Status" />,
-        cell: ({ row }) => statuses[row.original.status],
+        cell: ({ row }) => (
+          <StatusBadge status={row.original.status} label={statuses[row.original.status]} />
+        ),
       },
       {
         id: "actions",

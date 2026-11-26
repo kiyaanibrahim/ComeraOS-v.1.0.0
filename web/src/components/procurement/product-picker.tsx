@@ -133,7 +133,7 @@ export function ProductPicker({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-        <div className="max-h-[24rem] overflow-auto">
+        <div className="max-h-[24rem] overflow-auto rounded-md border">
           <Table>
             <TableHeader>
               <TableRow>

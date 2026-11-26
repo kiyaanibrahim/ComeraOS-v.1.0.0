@@ -21,6 +21,10 @@ export function quantity(value: number) {
 }
 
 export function statusLabel(status: string) {
-  if (status === "in_transit") return "In transit"
-  return status.charAt(0).toUpperCase() + status.slice(1)
+  const cleaned = status.trim().replaceAll("_", " ").replaceAll("-", " ")
+  if (!cleaned) return status
+  return cleaned
+    .split(/\s+/)
+    .map((part) => (part ? part.charAt(0).toUpperCase() + part.slice(1).toLowerCase() : part))
+    .join(" ")
 }

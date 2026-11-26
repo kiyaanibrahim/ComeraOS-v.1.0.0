@@ -6,8 +6,8 @@ import type { ColumnDef } from "@tanstack/react-table"
 import { DataTable } from "@/components/data-table/data-table"
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header"
 import type { DataTableFeatures } from "@/components/data-table/data-table-features"
-import { PosScreen, statusVariant } from "@/components/pos/pos-screen"
-import { Badge } from "@/components/ui/badge"
+import { PosScreen } from "@/components/pos/pos-screen"
+import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
@@ -160,9 +160,9 @@ function Payments({ business, supabase }: { business: BusinessRecord; supabase: 
         },
       },
       { id: "bill", header: "Linked bill", accessorFn: (row) => (row.bill_id ? billMap.get(row.bill_id)?.number ?? "—" : "—") },
-      { accessorKey: "amount", header: ({ column }) => <DataTableColumnHeader column={column} title="Amount" />, cell: ({ row }) => <div className="text-right tabular-nums">{money(Number(row.original.amount), business.currency)}</div> },
+      { accessorKey: "amount", meta: { align: "right" }, header: ({ column }) => <DataTableColumnHeader column={column} title="Amount" />, cell: ({ row }) => <div className="text-right tabular-nums">{money(Number(row.original.amount), business.currency)}</div> },
       { accessorKey: "external_ref", header: ({ column }) => <DataTableColumnHeader column={column} title="Receipt" />, cell: ({ row }) => row.original.external_ref || "—" },
-      { accessorKey: "status", header: ({ column }) => <DataTableColumnHeader column={column} title="Status" />, cell: ({ row }) => <Badge variant={statusVariant(row.original.status)}>{row.original.status}</Badge> },
+      { accessorKey: "status", header: ({ column }) => <DataTableColumnHeader column={column} title="Status" />, cell: ({ row }) => <StatusBadge status={row.original.status} /> },
       { accessorKey: "created_at", header: ({ column }) => <DataTableColumnHeader column={column} title="Created" />, cell: ({ row }) => stamp(row.original.created_at) },
     ],
     [billMap, business.currency, customerMap, orderMap],

@@ -22,6 +22,10 @@ export const features = tableFeatures({
   sortedRowModel: createSortedRowModel(),
   filterFns: { includesString: filterFn_includesString },
   sortFns: { alphanumeric: sortFn_alphanumeric, text: sortFn_text },
+  columnMeta: {} as {
+    align?: "left" | "right"
+    cellClassName?: string
+  },
 })
 
 export type DataTableFeatures = typeof features

@@ -1,13 +1,13 @@
 "use client"
 
-import { AnimatePresence, motion, useReducedMotion } from "motion/react"
+import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion, useTransform } from "motion/react"
 import {
   Children,
   cloneElement,
   createContext,
   isValidElement,
+  useCallback,
   useContext,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -18,67 +18,57 @@ import {
 
 import { cn } from "@/lib/utils"
 
+type Size = { width: number; height: number }
+
 type IslandContextValue = {
   view: string | null
+  report: (id: string, size: Size) => void
 }
 
 const IslandContext = createContext<IslandContextValue | null>(null)
 
 export const SHELL_SPRING = { type: "spring", duration: 0.8, bounce: 0.2 } as const
-const CONTENT_SPRING = { type: "spring", duration: 0.8, bounce: 0.35 } as const
-const EASE_OUT = [0.23, 1, 0.32, 1] as const
-const PILL_WIDTH = 126
-const PILL_HEIGHT = 37
-
-function useContentSize() {
-  const ref = useRef<HTMLDivElement>(null)
-  const [size, setSize] = useState<{ width: number; height: number } | null>(null)
-
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    setSize({ width: el.offsetWidth, height: el.offsetHeight })
-  }, [])
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el || typeof ResizeObserver === "undefined") return
-    const observer = new ResizeObserver(() => {
-      setSize({ width: el.offsetWidth, height: el.offsetHeight })
-    })
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [])
-
-  return [ref, size] as const
-}
+const ISLAND_SPRING = { type: "spring", duration: 0.5, bounce: 0 } as const
 
 function Slot({
   keyId,
   children,
   className,
-  stable = false,
+  enterDelay = 0,
 }: {
   keyId: string
   children: ReactNode
   className?: string
-  stable?: boolean
+  enterDelay?: number
 }) {
   const reduce = useReducedMotion()
-  const still = stable || reduce
+  const ctx = useContext(IslandContext)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el || !ctx) return
+    const send = () => {
+      const next = { width: Math.ceil(el.offsetWidth), height: Math.ceil(el.offsetHeight) }
+      if (next.width < 1 || next.height < 1) return
+      ctx.report(keyId, next)
+    }
+    send()
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(send)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [ctx, keyId])
+
   return (
     <motion.div
+      ref={ref}
       key={keyId}
-      initial={still ? { opacity: 0, filter: "blur(0px)" } : { opacity: 0, scale: 0.9, filter: "blur(5px)" }}
-      animate={still ? { opacity: 1, filter: "blur(0px)" } : { opacity: 1, scale: 1, filter: "blur(0px)" }}
-      exit={
-        still
-          ? { opacity: 0, filter: "blur(0px)", transition: { duration: 0.1 } }
-          : { opacity: 0, scale: 0.9, filter: "blur(0px)", transition: { duration: 0.08, ease: EASE_OUT } }
-      }
-      transition={still ? { duration: 0.15 } : CONTENT_SPRING}
-      style={{ transformOrigin: "center" }}
-      className={cn("flex items-center justify-center", className)}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0, transition: { duration: reduce ? 0 : 0.14 } }}
+      transition={reduce ? { duration: 0 } : { duration: 0.22, delay: enterDelay }}
+      className={cn("col-start-1 row-start-1 flex w-max min-w-max shrink-0 items-center justify-center justify-self-center self-center", className)}
     >
       {children}
     </motion.div>
@@ -98,44 +88,68 @@ export function DynamicIsland({
 }) {
   const reduce = useReducedMotion()
   const expanded = view !== null
-  const [sizerRef, size] = useContentSize()
-  const contextValue = useMemo(() => ({ view }), [view])
-  const pill = size ? Math.min(size.width, size.height) / 2 : PILL_HEIGHT / 2
-  const radius = view === "receipt" || view === "confirm" ? "var(--radius-xl)" : pill
+  const [size, setSize] = useState<Size | null>(null)
+  const viewRef = useRef(view)
+  viewRef.current = view
+  const report = useCallback((id: string, next: Size) => {
+    if (id !== (viewRef.current ?? "compact")) return
+    setSize((prev) => (prev && prev.width === next.width && prev.height === next.height ? prev : next))
+  }, [])
+  const contextValue = useMemo(() => ({ view, report }), [view, report])
+  const radius = 9999
+  const width = useMotionValue(0)
+  const height = useMotionValue(0)
+  const roundedWidth = useTransform(width, (value) => Math.round(value))
+  const roundedHeight = useTransform(height, (value) => Math.round(value))
+  const seen = useRef<Size | null>(null)
+
+  useLayoutEffect(() => {
+    if (!size) return
+    const previous = seen.current
+    seen.current = size
+    if (reduce || !previous) {
+      width.set(size.width)
+      height.set(size.height)
+      return
+    }
+    if (previous.width === size.width && previous.height === size.height) return
+    const widthAnimation = animate(width, size.width, ISLAND_SPRING)
+    const heightAnimation = animate(height, size.height, ISLAND_SPRING)
+    return () => {
+      widthAnimation.stop()
+      heightAnimation.stop()
+    }
+  }, [size, reduce, width, height])
 
   return (
     <IslandContext.Provider value={contextValue}>
       <motion.div
         role="status"
         aria-live="polite"
-        initial={false}
-        animate={
-          size
-            ? { width: size.width, height: size.height, borderRadius: radius }
-            : { width: PILL_WIDTH, height: PILL_HEIGHT, borderRadius: pill }
-        }
-        transition={reduce ? { duration: 0 } : SHELL_SPRING}
         className={cn(
-          "relative inline-flex items-center justify-center overflow-hidden bg-card text-card-foreground shadow-sm ring-1 ring-foreground/10",
+          "relative inline-grid place-items-center overflow-clip bg-card text-card-foreground shadow-sm ring-1 ring-foreground/10 transition-[background-color,color,box-shadow] duration-300",
           className,
         )}
+        style={{
+          width: size ? roundedWidth : "max-content",
+          height: size ? roundedHeight : "max-content",
+          borderRadius: radius,
+        }}
       >
-        <div ref={sizerRef} className="w-max">
-          <AnimatePresence mode="popLayout" initial={false}>
-            {!expanded && compact ? (
-              <Slot key="compact" keyId="compact" stable>
-                {compact}
-              </Slot>
-            ) : null}
-            {Children.map(children, (child) =>
-              isValidElement<{ id?: string }>(child)
-                ? cloneElement(child as ReactElement<{ id?: string }>, {
-                    key: child.props.id || "view",
-                  })
-                : child,
-            )}
-          </AnimatePresence>
-        </div>
+        <AnimatePresence initial={false}>
+          {!expanded && compact ? (
+            <Slot key="compact" keyId="compact" enterDelay={0.1}>
+              {compact}
+            </Slot>
+          ) : null}
+          {Children.map(children, (child) =>
+            isValidElement<{ id?: string }>(child)
+              ? cloneElement(child as ReactElement<{ id?: string }>, {
+                  key: child.props.id || "view",
+                })
+              : child,
+          )}
+        </AnimatePresence>
       </motion.div>
     </IslandContext.Provider>
   )
@@ -149,6 +163,7 @@ export function DynamicIslandView({
   id: string
   children: ReactNode
   className?: string
+  stable?: boolean
 }) {
   const ctx = useContext(IslandContext)
   if (!ctx) throw new Error("DynamicIslandView must be used inside DynamicIsland")
@@ -156,7 +171,7 @@ export function DynamicIslandView({
   return (
     <AnimatePresence initial={false}>
       {active ? (
-        <Slot key={id} keyId={id} className={className}>
+        <Slot key={id} keyId={id} className={className} enterDelay={0.06}>
           {children}
         </Slot>
       ) : null}

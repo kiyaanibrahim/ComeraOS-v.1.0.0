@@ -510,31 +510,6 @@ const modules: Record<string, ModuleSpec> = {
       ],
     },
   },
-  "Product Catalog": {
-    metrics: [
-      metric("Published", "percent", 81, 0.45),
-      metric("Listed", "count", 74, 0.25),
-      metric("Views", "count", 640, 0.35),
-      metric("Unpublished", "count", 14, 0.5, { invert: true }),
-    ],
-    trend: { title: "Published share", description: "Catalog published rate against the prior year." },
-    bars: {
-      title: "Views",
-      description: "Catalog views by channel.",
-      kind: "count",
-      base: 220,
-      items: ["Storefront", "Sales link", "POS lookup", "Partner"],
-    },
-    split: {
-      title: "Listing state",
-      description: "Entries by publish state.",
-      items: [
-        { label: "Live", tone: "positive", weight: 3 },
-        { label: "Draft", tone: "neutral" },
-        { label: "Hidden", tone: "negative", weight: 0.6 },
-      ],
-    },
-  },
   Categories: {
     metrics: [
       metric("Category sales", "money", 12840, 0.4),
@@ -608,6 +583,31 @@ const modules: Record<string, ModuleSpec> = {
         { label: "Received", tone: "positive" },
         { label: "Open", tone: "neutral", weight: 1.4 },
         { label: "Over budget", tone: "negative", weight: 0.5 },
+      ],
+    },
+  },
+  Revenue: {
+    metrics: [
+      metric("Recognized", "money", 19800, 0.55),
+      metric("Draft", "money", 2400, 0.3),
+      metric("Sources", "count", 6, 0.2),
+      metric("Voided", "count", 1, 0.4, { invert: true }),
+    ],
+    trend: { title: "Recognized revenue", description: "Recognized revenue against the prior year." },
+    bars: {
+      title: "Source",
+      description: "Revenue by source.",
+      kind: "money",
+      base: 5400,
+      items: ["Counter", "Online", "Wholesale", "Other"],
+    },
+    split: {
+      title: "Recognition",
+      description: "Revenue lines by state.",
+      items: [
+        { label: "Recognized", tone: "positive", weight: 3 },
+        { label: "Draft", tone: "neutral" },
+        { label: "Void", tone: "negative", weight: 0.3 },
       ],
     },
   },

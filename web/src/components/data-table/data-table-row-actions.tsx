@@ -22,7 +22,7 @@ export function DataTableRowActions({
 }) {
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className="ml-auto" />}>
+      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" />}>
         <span className="sr-only">Open menu</span>
         <MoreHorizontal />
       </DropdownMenuTrigger>

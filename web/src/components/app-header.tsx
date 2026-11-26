@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { Suspense } from "react"
+import { createPortal } from "react-dom"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { ArrowLeftIcon, BadgeCheckIcon, BellIcon, CheckCheckIcon, LogOutIcon, SearchIcon, SunIcon } from "lucide-react"
@@ -44,17 +45,19 @@ import { Separator } from "@/components/ui/separator"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/components/ui/sonner"
-import { dismissIsland, holdIsland, useIslandToast, type IslandToast } from "@/lib/island-toast"
+import { dismissIslandCard, useIslandCard, useIslandToast, type IslandReceipt, type IslandToast } from "@/lib/island-toast"
 
 function toastClass(notice: IslandToast | null) {
   const message = notice?.message ?? ""
   const short = message.trim().split(/\s+/).filter(Boolean).length <= 2
-  const red = notice?.tone === "error" || message.toLowerCase().includes("deleted")
-  return [
-    "text-center text-sm",
-    short ? "whitespace-nowrap" : "",
-    red ? "text-red-400" : "text-foreground",
-  ].join(" ")
+  return ["text-center text-sm text-inherit", short ? "whitespace-nowrap" : ""].join(" ")
+}
+
+function islandTone(notice: IslandToast | null, showing: boolean) {
+  if (!showing || !notice) return ""
+  if (notice.tone === "error") return "bg-destructive text-white ring-destructive dark:text-neutral-950"
+  if (notice.tone === "success") return "bg-positive text-white ring-positive dark:text-neutral-950"
+  return "bg-foreground text-background ring-foreground"
 }
 import { useTheme } from "next-themes"
 
@@ -65,6 +68,72 @@ import { resolveShell } from "@/lib/shell"
 import { createClient } from "@/lib/supabase/client"
 
 const outlineControl = "border-border transition-none!"
+
+function IslandLayer({ children }: { children: React.ReactNode }) {
+  const [mounted, setMounted] = React.useState(false)
+  React.useEffect(() => setMounted(true), [])
+  if (!mounted) return null
+  return createPortal(
+    <div className="pointer-events-none fixed inset-x-0 top-0 z-[80] flex h-12 items-center justify-center">
+      {children}
+    </div>,
+    document.body,
+  )
+}
+
+function ReceiptBody({ receipt }: { receipt: IslandReceipt }) {
+  return (
+    <div id="island-receipt" className="flex flex-col gap-2 text-sm">
+      {receipt.lines.length > 0 ? (
+        <div className="flex flex-col gap-1.5">
+          {receipt.lines.map((line, index) => (
+            <div key={`${line.name}-${index}`} className="flex items-baseline justify-between gap-3">
+              <span className="min-w-0 truncate">
+                {line.name}
+                <span className="text-muted-foreground"> × {line.quantity}</span>
+              </span>
+              <span className="shrink-0 text-muted-foreground tabular-nums">{money(line.amount, receipt.currency)}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <div className="flex flex-col gap-1 border-t pt-2">
+        <div className="flex justify-between gap-3 text-muted-foreground">
+          <span>Subtotal</span>
+          <span className="tabular-nums">{money(receipt.subtotal, receipt.currency)}</span>
+        </div>
+        {receipt.discount > 0 ? (
+          <div className="flex justify-between gap-3 text-muted-foreground">
+            <span>Discount</span>
+            <span className="tabular-nums">{money(receipt.discount, receipt.currency)}</span>
+          </div>
+        ) : null}
+        {receipt.tax > 0 ? (
+          <div className="flex justify-between gap-3 text-muted-foreground">
+            <span>Tax</span>
+            <span className="tabular-nums">{money(receipt.tax, receipt.currency)}</span>
+          </div>
+        ) : null}
+        <div className="flex justify-between gap-3 font-medium">
+          <span>Total</span>
+          <span className="tabular-nums">{money(receipt.total, receipt.currency)}</span>
+        </div>
+        {receipt.tendered !== null ? (
+          <div className="flex justify-between gap-3 text-muted-foreground">
+            <span>Tendered</span>
+            <span className="tabular-nums">{money(receipt.tendered, receipt.currency)}</span>
+          </div>
+        ) : null}
+        {receipt.change !== null ? (
+          <div className="flex justify-between gap-3 text-muted-foreground">
+            <span>Change</span>
+            <span className="tabular-nums">{money(receipt.change, receipt.currency)}</span>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
 
 function initials(name: string) {
   return name
@@ -415,25 +484,22 @@ export function AppHeader() {
     ...businessHits.map((business) => ({ key: business.slug, label: business.name, href: `/app/${business.slug}`, group: "Business" })),
   ]
   const [active, setActive] = React.useState(0)
-  const receipt = notice?.receipt
-  const confirm = notice?.confirm
+  const card = useIslandCard()
   const islandRef = React.useRef<HTMLDivElement>(null)
-  const view = confirm ? "confirm" : receipt ? "receipt" : notice ? "toast" : hover || open ? "search" : null
+  const view = notice ? "toast" : hover || open ? "search" : null
 
   React.useEffect(() => {
-    if (!confirm) return
+    if (!open) return
     function onPointerDown(event: PointerEvent) {
       const target = event.target
       if (!(target instanceof Node) || islandRef.current?.contains(target)) return
-      dismissIsland()
+      setOpen(false)
+      setHover(false)
+      hoverRef.current = false
     }
     document.addEventListener("pointerdown", onPointerDown)
     return () => document.removeEventListener("pointerdown", onPointerDown)
-  }, [confirm, notice?.id])
-
-  React.useEffect(() => {
-    if (receipt && hover) holdIsland(true)
-  }, [receipt, hover])
+  }, [open])
 
   React.useEffect(() => {
     const supabase = createClient()
@@ -469,6 +535,17 @@ export function AppHeader() {
     input.focus()
     input.select()
   }, [view])
+
+  function pinSearch() {
+    const input = searchRef.current
+    if (input) {
+      setOpen(true)
+      input.focus()
+      return
+    }
+    focusSearch.current = true
+    setOpen(true)
+  }
 
   function onSearchKey(event: React.KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Escape" && query === "") {
@@ -580,32 +657,40 @@ export function AppHeader() {
         <HeaderNotifications />
         <HeaderAccount />
       </div>
-      <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center">
+      <IslandLayer>
         <div
           ref={islandRef}
           className="pointer-events-auto relative"
           onMouseEnter={() => {
             hoverRef.current = true
             setHover(true)
-            if (notice?.receipt) holdIsland(true)
           }}
           onMouseLeave={() => {
             hoverRef.current = false
             setHover(false)
-            holdIsland(false)
-            if (document.activeElement !== searchRef.current) setOpen(false)
+          }}
+          onClickCapture={(event) => {
+            if (notice) return
+            const target = event.target
+            if (!(target instanceof Element)) return
+            if (target.closest("button")) return
+            const anchor = target.closest("a")
+            if (anchor && (hover || open)) return
+            if (anchor) event.preventDefault()
+            pinSearch()
           }}
         >
           <DynamicIsland
             view={view}
+            className={islandTone(notice, view === "toast")}
             compact={
               <Link href={home} className="flex size-8 items-center justify-center text-foreground" aria-label="Comera">
                 <Mark className="size-5" />
               </Link>
             }
           >
-            <DynamicIslandView id="search" className="relative h-9 w-60 items-center">
-              <Link href={home} className="absolute left-3 z-10 flex h-9 items-center justify-center text-foreground" aria-label="Comera">
+            <DynamicIslandView id="search" stable className="relative h-9 w-60 items-center">
+              <Link href={home} className="absolute inset-y-0 left-3 z-10 flex items-center justify-center text-foreground" aria-label="Comera">
                 <Mark className="size-5" />
               </Link>
               <input
@@ -613,8 +698,11 @@ export function AppHeader() {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={onSearchKey}
-                onBlur={() => {
-                  if (!hoverRef.current) setOpen(false)
+                onBlur={(event) => {
+                  const next = event.relatedTarget
+                  if (next instanceof Node && islandRef.current?.contains(next)) return
+                  if (hoverRef.current) return
+                  setOpen(false)
                 }}
                 placeholder="Search"
                 aria-label="Search"
@@ -622,90 +710,12 @@ export function AppHeader() {
                 aria-expanded={hits.length > 0}
                 aria-controls="island-search-results"
                 aria-activedescendant={hits[active] ? `island-hit-${active}` : undefined}
-                className="h-full w-full bg-transparent px-10 text-left text-sm text-foreground outline-none placeholder:text-center placeholder:text-muted-foreground"
+                className="h-full w-full appearance-none bg-transparent px-10 py-0 text-left text-sm leading-9 text-foreground outline-none placeholder:text-center placeholder:text-muted-foreground"
               />
-              <SearchIcon className="pointer-events-none absolute right-3.5 size-4 text-muted-foreground" />
-            </DynamicIslandView>
-            <DynamicIslandView id="confirm" className="w-72 flex-col items-stretch gap-3 px-3.5 py-3">
-              <p className="text-center text-sm">{notice?.message}</p>
-              <Button
-                type="button"
-                variant={notice?.confirm?.destructive ? "destructive" : "default"}
-                onClick={() => {
-                  const run = notice?.confirm?.run
-                  dismissIsland()
-                  run?.()
-                }}
-              >
-                {notice?.confirm?.label ?? "Confirm"}
-              </Button>
+              <SearchIcon className="pointer-events-none absolute top-1/2 right-3.5 size-4 -translate-y-1/2 text-muted-foreground" />
             </DynamicIslandView>
             <DynamicIslandView id="toast" className="px-4 py-2">
               <span className={toastClass(notice)}>{notice?.message}</span>
-            </DynamicIslandView>
-            <DynamicIslandView id="receipt" className="w-72 flex-col items-stretch p-0">
-              {receipt ? (
-                <>
-                  <div id="island-receipt" className="flex w-full flex-col px-3.5 pt-3 pb-2 text-left">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <p className="text-[15px] font-medium text-positive">Completed</p>
-                      <p className="text-xs text-muted-foreground tabular-nums">{receipt.billNumber}</p>
-                    </div>
-                    {receipt.lines.length > 0 ? (
-                      <div className="mt-2.5 flex flex-col gap-1.5">
-                        {receipt.lines.map((line, index) => (
-                          <div key={`${line.name}-${index}`} className="flex items-baseline justify-between gap-3 text-[13px] leading-5">
-                            <span className="min-w-0 truncate">
-                              {line.name}
-                              <span className="text-muted-foreground"> × {line.quantity}</span>
-                            </span>
-                            <span className="shrink-0 text-muted-foreground tabular-nums">{money(line.amount, receipt.currency)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                    <div className="mt-2.5 flex flex-col gap-1 border-t border-foreground/10 pt-2 text-[13px] leading-5">
-                      <div className="flex justify-between gap-3 text-muted-foreground">
-                        <span>Subtotal</span>
-                        <span className="tabular-nums">{money(receipt.subtotal, receipt.currency)}</span>
-                      </div>
-                      {receipt.discount > 0 ? (
-                        <div className="flex justify-between gap-3 text-muted-foreground">
-                          <span>Discount</span>
-                          <span className="tabular-nums">{money(receipt.discount, receipt.currency)}</span>
-                        </div>
-                      ) : null}
-                      {receipt.tax > 0 ? (
-                        <div className="flex justify-between gap-3 text-muted-foreground">
-                          <span>Tax</span>
-                          <span className="tabular-nums">{money(receipt.tax, receipt.currency)}</span>
-                        </div>
-                      ) : null}
-                      <div className="flex justify-between gap-3 pt-0.5 font-medium">
-                        <span>Total</span>
-                        <span className="tabular-nums">{money(receipt.total, receipt.currency)}</span>
-                      </div>
-                      {receipt.tendered !== null ? (
-                        <div className="flex justify-between gap-3 text-muted-foreground">
-                          <span>Tendered</span>
-                          <span className="tabular-nums">{money(receipt.tendered, receipt.currency)}</span>
-                        </div>
-                      ) : null}
-                      {receipt.change !== null ? (
-                        <div className="flex justify-between gap-3 text-muted-foreground">
-                          <span>Change</span>
-                          <span className="tabular-nums">{money(receipt.change, receipt.currency)}</span>
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div className="px-2.5 pb-2.5 print:hidden">
-                    <Button type="button" variant="secondary" className="w-full" onClick={() => window.print()}>
-                      Print
-                    </Button>
-                  </div>
-                </>
-              ) : null}
             </DynamicIslandView>
           </DynamicIsland>
           {!notice && view === "search" && hits.length > 0 ? (
@@ -728,8 +738,61 @@ export function AppHeader() {
             </div>
           ) : null}
         </div>
-      </div>
+      </IslandLayer>
       </motion.div>
+      <Dialog
+        open={card?.kind === "receipt"}
+        onOpenChange={(open) => {
+          if (!open) dismissIslandCard()
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Receipt</DialogTitle>
+            <DialogDescription>
+              {card?.kind === "receipt" ? card.receipt.billNumber : "Sale complete"}
+            </DialogDescription>
+          </DialogHeader>
+          {card?.kind === "receipt" ? <ReceiptBody receipt={card.receipt} /> : null}
+          <DialogFooter className="print:hidden">
+            <Button type="button" variant="outline" onClick={() => dismissIslandCard()}>
+              Close
+            </Button>
+            <Button type="button" onClick={() => window.print()}>
+              Print
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={card?.kind === "confirm"}
+        onOpenChange={(open) => {
+          if (!open) dismissIslandCard()
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{card?.kind === "confirm" ? card.message : "Confirm"}</DialogTitle>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => dismissIslandCard()}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant={card?.kind === "confirm" && card.confirm.destructive ? "destructive" : "default"}
+              onClick={() => {
+                if (card?.kind !== "confirm") return
+                const run = card.confirm.run
+                dismissIslandCard()
+                run()
+              }}
+            >
+              {card?.kind === "confirm" ? card.confirm.label : "Confirm"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={feedbackOpen} onOpenChange={setFeedbackOpen}>
         <DialogContent>
           <DialogHeader>

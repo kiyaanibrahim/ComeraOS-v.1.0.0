@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { CustomerFormDialog, emptyCustomer, type CustomerDraft } from "@/components/crm/customer-form"
+import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "@/components/ui/sonner"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -206,7 +207,7 @@ function Directory({
         </div>
       </div>
       <Card>
-        <CardContent className="px-0">
+        <CardContent>
           {loading ? <div className="mx-4 h-40 animate-pulse rounded-xl bg-muted" /> : null}
           {!loading && visible.length === 0 ? (
             <Empty>
@@ -221,6 +222,7 @@ function Directory({
             </Empty>
           ) : null}
           {!loading && visible.length > 0 ? (
+            <div className="overflow-hidden rounded-md border">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -254,7 +256,7 @@ function Directory({
                             </Link>
                             <div className="flex flex-wrap items-center gap-1">
                               <Badge variant="secondary">{customerTypeLabel(customer.customer_type)}</Badge>
-                              {customer.status === "inactive" ? <Badge variant="outline">Inactive</Badge> : null}
+                              <StatusBadge status={customer.status} />
                             </div>
                           </div>
                         </div>
@@ -306,6 +308,7 @@ function Directory({
                 })}
               </TableBody>
             </Table>
+            </div>
           ) : null}
         </CardContent>
       </Card>

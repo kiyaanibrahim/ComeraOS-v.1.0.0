@@ -135,10 +135,11 @@ function Composer({
       supabase
         .from("products")
         .select(
-          "id, sku, name, description, price, cost, track_inventory, category_id, weight_grams, supplier_sku, pack_size",
+          "id, sku, name, description, price, cost, track_inventory, category_id, weight_grams, supplier_sku, pack_size, product_type",
         )
         .eq("business_id", business.id)
         .eq("status", "active")
+        .in("product_type", ["standard", "variant"])
         .order("name"),
       supabase.from("categories").select("id, name").eq("business_id", business.id),
       supabase.from("locations").select("id, name, kind").eq("business_id", business.id).order("name"),
@@ -646,7 +647,7 @@ function Composer({
           {dirty ? (
             <p className="text-sm text-muted-foreground">Unsaved changes. The stored totals refresh when you save.</p>
           ) : null}
-          <div className="overflow-x-auto">
+          <div className="overflow-hidden rounded-md border">
             <Table>
               <TableHeader>
                 <TableRow>

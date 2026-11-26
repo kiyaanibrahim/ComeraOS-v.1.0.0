@@ -7,6 +7,7 @@ import { DataTable } from "@/components/data-table/data-table"
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header"
 import type { DataTableFeatures } from "@/components/data-table/data-table-features"
 import { FlowFrame } from "@/components/flow/flow-frame"
+import { FinanceSelect } from "@/components/financials/finance-shell"
 import {
   Card,
   CardContent,
@@ -14,8 +15,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/sonner"
 import { money, quantity } from "@/lib/flow/format"
+import { callRpc } from "@/lib/flow/rpc"
 import type { BusinessRecord, FlowClient } from "@/lib/flow/use-business"
 
 type Balance = {
@@ -51,6 +55,9 @@ function Stock({ business, supabase }: { business: BusinessRecord; supabase: Flo
   const [movements, setMovements] = useState<Movement[]>([])
   const [names, setNames] = useState<Record<string, { sku: string; name: string; cost: number }>>({})
   const [locations, setLocations] = useState<Record<string, string>>({})
+  const [locationList, setLocationList] = useState<{ id: string; name: string }[]>([])
+  const [products, setProducts] = useState<{ id: string; name: string }[]>([])
+  const [adjust, setAdjust] = useState({ productId: "", locationId: "", quantity: "" })
 
   const load = useCallback(async () => {
     const [balanceRes, movementRes, productRes, locationRes] = await Promise.all([
@@ -64,7 +71,11 @@ function Stock({ business, supabase }: { business: BusinessRecord; supabase: Flo
         .eq("business_id", business.id)
         .order("created_at", { ascending: false })
         .limit(100),
-      supabase.from("products").select("id, sku, name, cost").eq("business_id", business.id),
+      supabase
+        .from("products")
+        .select("id, sku, name, cost, product_type")
+        .eq("business_id", business.id)
+        .in("product_type", ["standard", "variant"]),
       supabase.from("locations").select("id, name").eq("business_id", business.id),
     ])
     const error = balanceRes.error || movementRes.error || productRes.error || locationRes.error
@@ -80,6 +91,8 @@ function Stock({ business, supabase }: { business: BusinessRecord; supabase: Flo
       ),
     )
     setLocations(Object.fromEntries((locationRes.data ?? []).map((location) => [location.id, location.name])))
+    setLocationList((locationRes.data ?? []) as { id: string; name: string }[])
+    setProducts((productRes.data ?? []).map((product) => ({ id: product.id, name: product.name })))
   }, [business.id, supabase])
 
   useEffect(() => {
@@ -162,8 +175,46 @@ function Stock({ business, supabase }: { business: BusinessRecord; supabase: Flo
     [],
   )
 
+  async function saveAdjust() {
+    try {
+      await callRpc(supabase, "adjust_inventory", {
+        p_business_id: business.id,
+        p_product_id: adjust.productId,
+        p_location_id: adjust.locationId,
+        p_quantity: Number(adjust.quantity),
+        p_reason: "adjustment",
+      })
+      setAdjust({ productId: "", locationId: "", quantity: "" })
+      await load()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not adjust stock")
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Stock adjustment</CardTitle>
+          <CardDescription>Quantity changes post to inventory and to the journal. They are not purchases, sales, or expenses.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-2">
+          <FinanceSelect
+            value={adjust.productId || "none"}
+            onValueChange={(value) => setAdjust({ ...adjust, productId: value === "none" ? "" : value })}
+            items={{ none: "Product", ...Object.fromEntries(products.map((product) => [product.id, product.name])) }}
+          />
+          <FinanceSelect
+            value={adjust.locationId || "none"}
+            onValueChange={(value) => setAdjust({ ...adjust, locationId: value === "none" ? "" : value })}
+            items={{ none: "Location", ...Object.fromEntries(locationList.map((location) => [location.id, location.name])) }}
+          />
+          <Input className="w-28" type="number" placeholder="Qty" value={adjust.quantity} onValueChange={(value) => setAdjust({ ...adjust, quantity: value })} />
+          <Button variant="outline" onClick={() => void saveAdjust()}>
+            Post
+          </Button>
+        </CardContent>
+      </Card>
       <Card>
         <CardHeader>
           <CardTitle>On hand</CardTitle>

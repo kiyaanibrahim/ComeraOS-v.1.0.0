@@ -8,6 +8,7 @@ import { DataTable } from "@/components/data-table/data-table"
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header"
 import type { DataTableFeatures } from "@/components/data-table/data-table-features"
 import { DatePicker } from "@/components/date-picker"
+import { StatusBadge } from "@/components/status-badge"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -69,7 +70,7 @@ function bucket(status: string) {
   const value = status.toLowerCase()
   if (value === "draft") return "draft"
   if (
-    ["completed", "paid", "delivered", "received", "approved", "won", "closed", "succeeded", "ok", "enabled"].includes(
+    ["completed", "paid", "delivered", "received", "approved", "recognized", "won", "closed", "succeeded", "ok", "enabled"].includes(
       value,
     )
   ) {
@@ -259,30 +260,6 @@ async function loadLedger(title: string, supabase: FlowClient, businessId: strin
       ),
     }
   }
-  if (title === "Product Catalog" && business) {
-    const { data, error, count } = await supabase
-      .from("catalog_entries")
-      .select("id, product_id, is_visible, sort_order, created_at", { count: "exact" })
-      .eq("business_id", business)
-      .order("sort_order")
-    if (error) throw new Error(error.message)
-    const products = await supabase.from("products").select("id, name, price").eq("business_id", business)
-    if (products.error) throw new Error(products.error.message)
-    const names = new Map((products.data ?? []).map((product) => [product.id, product]))
-    return {
-      total: count ?? 0,
-      rows: shape(
-        (data ?? []).map((row) => ({
-          id: row.id,
-          reference: names.get(row.product_id)?.name ?? "Product",
-          status: row.is_visible ? "active" : "archived",
-          amount: Number(names.get(row.product_id)?.price ?? 0),
-          when: row.created_at,
-        })),
-        currency,
-      ),
-    }
-  }
   if (title === "Batches" && business) {
     const { data, error, count } = await supabase
       .from("batches")
@@ -319,6 +296,28 @@ async function loadLedger(title: string, supabase: FlowClient, businessId: strin
           status: row.status,
           amount: Number(row.total),
           when: row.created_at,
+        })),
+        currency,
+      ),
+    }
+  }
+  if (title === "Revenue" && business) {
+    const { data, error, count } = await supabase
+      .from("revenues")
+      .select("id, source, category, status, amount, recognized_on", { count: "exact" })
+      .eq("business_id", business)
+      .order("recognized_on", { ascending: false })
+      .limit(200)
+    if (error) throw new Error(error.message)
+    return {
+      total: count ?? 0,
+      rows: shape(
+        (data ?? []).map((row) => ({
+          id: row.id,
+          reference: `${row.source} · ${row.category}`,
+          status: row.status,
+          amount: Number(row.amount),
+          when: row.recognized_on,
         })),
         currency,
       ),
@@ -726,7 +725,7 @@ export function RecordLedger({ title }: { title: string }) {
       {
         accessorKey: "status",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Status" />,
-        cell: ({ row }) => <span className="capitalize">{showStatus(row.original.status)}</span>,
+        cell: ({ row }) => <StatusBadge status={row.original.status} label={showStatus(row.original.status)} />,
       },
       {
         accessorKey: "amount",

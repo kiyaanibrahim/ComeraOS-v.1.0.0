@@ -7,7 +7,6 @@ import { usePathname } from "next/navigation"
 import { LayerSwitcher } from "@/components/team-switcher"
 import { NavMain } from "@/components/nav-main"
 import { NavShortcuts } from "@/components/nav-shortcuts"
-import { NavUser } from "@/components/nav-user"
 import {
   Sidebar,
   SidebarContent,
@@ -15,17 +14,19 @@ import {
   SidebarHeader,
   SidebarRail,
 } from "@/components/ui/sidebar"
+import { motion, useReducedMotion } from "motion/react"
+
 import { presentBusiness, type Business } from "@/lib/businesses"
 import { NavModule } from "@/components/nav-module"
-import { matchModule, navForShell } from "@/lib/nav"
+import { matchModule, moduleByTitle, navForShell } from "@/lib/nav"
 import { resolveShell } from "@/lib/shell"
-import { profileUpdatedEvent } from "@/lib/profile"
 import { createClient } from "@/lib/supabase/client"
 import {
   BoxesIcon,
   LandmarkIcon,
   LayoutDashboardIcon,
   MonitorIcon,
+  PackageIcon,
   TruckIcon,
   PieChartIcon,
   ScrollTextIcon,
@@ -42,6 +43,7 @@ const sectionIcons: Record<string, LucideIcon> = {
   Sales: ShoppingCartIcon,
   Customers: UsersIcon,
   Procurement: TruckIcon,
+  Products: PackageIcon,
   Inventory: BoxesIcon,
   Financials: LandmarkIcon,
   Analytics: PieChartIcon,
@@ -86,8 +88,30 @@ function SidebarNav() {
   const label =
     shell.layer === "settings" ? "Business settings" : shell.layer === "admin" ? "Admin" : "Home"
 
-  const module = matchModule(pathname, shell.businessId)
-  const mainSections = module ? sections : sections.filter((section) => section.title !== "Business settings")
+  const routeModule = matchModule(pathname, shell.businessId)
+  const [trackedPath, setTrackedPath] = React.useState(pathname)
+  const [pane, setPane] = React.useState<{ title: string } | "root" | null>(null)
+  const [motionDirection, setMotionDirection] = React.useState<"idle" | "forward" | "back">("idle")
+  if (pathname !== trackedPath) {
+    setTrackedPath(pathname)
+    setPane(null)
+    setMotionDirection("idle")
+  }
+
+  const picked = pane && pane !== "root" ? moduleByTitle(shell.businessId, pane.title) : null
+  const displayed = pane === "root" ? null : (picked ?? (pane === null ? routeModule : null))
+
+  function openModule(title: string) {
+    setMotionDirection("forward")
+    setPane({ title })
+  }
+
+  function showRoot() {
+    setMotionDirection("back")
+    setPane("root")
+  }
+
+  const mainSections = sections.filter((section) => section.title !== "Business settings")
   const settingsSection = sections.find((section) => section.title === "Business settings")
   const navMain = mainSections.map((section) => {
     const Icon = sectionIcons[section.title] ?? Settings2Icon
@@ -96,6 +120,8 @@ function SidebarNav() {
       url: section.items[0]?.href ?? "#",
       icon: <Icon />,
       drill: section.drill,
+      isActive: section.drill ? routeModule?.title === section.title : undefined,
+      onSelect: section.drill ? () => openModule(section.title) : undefined,
       items:
         section.drill || section.items.length < 2
           ? undefined
@@ -105,6 +131,9 @@ function SidebarNav() {
             })),
     }
   })
+  const reduceMotion = useReducedMotion()
+  const slide =
+    reduceMotion || motionDirection === "idle" ? false : { opacity: 0, x: motionDirection === "forward" ? 16 : -16 }
 
   return (
     <>
@@ -116,18 +145,25 @@ function SidebarNav() {
           pathname={pathname}
         />
       </SidebarHeader>
-      <SidebarContent>
-        {module ? (
-          <NavModule module={module} />
-        ) : (
-          <>
-            {navMain.length > 0 ? <NavMain label={label} items={navMain} /> : null}
-            {shell.layer === "home" && shell.businessId ? <NavShortcuts businessKey={shell.businessId} /> : null}
-          </>
-        )}
+      <SidebarContent className="overflow-x-hidden">
+        <motion.div
+          key={displayed?.id ?? "root"}
+          initial={slide}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+        >
+          {displayed ? (
+            <NavModule module={displayed} onBack={showRoot} />
+          ) : (
+            <>
+              {navMain.length > 0 ? <NavMain label={label} items={navMain} /> : null}
+              {shell.layer === "home" && shell.businessId ? <NavShortcuts businessKey={shell.businessId} /> : null}
+            </>
+          )}
+        </motion.div>
       </SidebarContent>
-      <SidebarFooter>
-        {settingsSection && module?.id !== "settings" ? (
+      {settingsSection && displayed?.id !== "settings" ? (
+        <SidebarFooter>
           <NavMain
             items={[
               {
@@ -135,50 +171,15 @@ function SidebarNav() {
                 url: settingsSection.items[0]?.href ?? "#",
                 icon: <Settings2Icon />,
                 drill: true,
+                isActive: routeModule?.id === "settings",
+                onSelect: () => openModule(settingsSection.title),
               },
             ]}
           />
-        ) : null}
-        <SidebarUser />
-      </SidebarFooter>
+        </SidebarFooter>
+      ) : null}
     </>
   )
-}
-
-function SidebarUser() {
-  const [user, setUser] = React.useState({
-    name: "Account",
-    email: "",
-    avatar: "",
-  })
-
-  React.useEffect(() => {
-    const supabase = createClient()
-    let active = true
-    async function load() {
-      const { data } = await supabase.auth.getUser()
-      const current = data.user
-      if (!current || !active) return
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("display_name, email")
-        .eq("id", current.id)
-        .maybeSingle()
-      if (!active) return
-      const email = profile?.email || current.email || ""
-      const name = profile?.display_name?.trim() || email || "Account"
-      setUser({ name, email, avatar: "" })
-    }
-    void load()
-    const refresh = () => void load()
-    window.addEventListener(profileUpdatedEvent, refresh)
-    return () => {
-      active = false
-      window.removeEventListener(profileUpdatedEvent, refresh)
-    }
-  }, [])
-
-  return <NavUser user={user} />
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {

@@ -7,6 +7,7 @@ import { AuthCard, AuthProviders, type SocialProvider } from "@/components/auth-
 import { Button } from "@/components/ui/button"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { startGoogleSignIn } from "@/lib/auth/google"
 import { createClient } from "@/lib/supabase/client"
 
 export function LoginForm() {
@@ -54,17 +55,10 @@ export function LoginForm() {
     setMessage(error ? error.message : "Check your email for the reset link.")
   }
 
-  async function onProvider(provider: SocialProvider) {
+  async function onProvider(_provider: SocialProvider) {
     setPending(true)
     setMessage(null)
-    const supabase = createClient()
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "custom:google",
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback?next=/app`,
-        queryParams: { prompt: "select_account" },
-      },
-    })
+    const { error } = await startGoogleSignIn("/app")
     if (error) {
       setPending(false)
       setMessage(error.message)

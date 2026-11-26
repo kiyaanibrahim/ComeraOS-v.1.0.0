@@ -151,16 +151,24 @@ function businessModules(businessId: string): NavModuleMatch[] {
       items: [{ label: "CRM", href: `${base}/crm` }],
     },
     {
+      id: "products",
+      title: "Products",
+      keywords: ["products", "catalog", "catalogue", "categories"],
+      backHref: base,
+      roots: [`${base}/products`, `${base}/catalog`, `${base}/categories`],
+      items: [
+        { label: "Products", href: `${base}/products` },
+        { label: "Categories", href: `${base}/categories` },
+      ],
+    },
+    {
       id: "inventory",
       title: "Inventory",
       keywords: ["inventory"],
       backHref: base,
-      roots: [`${base}/inventory`, `${base}/products`, `${base}/catalog`, `${base}/categories`, `${base}/batches`],
+      roots: [`${base}/inventory`, `${base}/batches`],
       items: [
         { label: "Inventory", href: `${base}/inventory` },
-        { label: "Products", href: `${base}/products` },
-        { label: "Product Catalog", href: `${base}/catalog` },
-        { label: "Categories", href: `${base}/categories` },
         { label: "Batches", href: `${base}/batches` },
       ],
     },
@@ -178,10 +186,11 @@ function businessModules(businessId: string): NavModuleMatch[] {
     {
       id: "financials",
       title: "Financials",
-      keywords: ["financials"],
+      keywords: ["financials", "finance", "revenue"],
       backHref: base,
       roots: [`${base}/financials`],
       items: [
+        { label: "Revenue", href: `${base}/financials/revenue` },
         { label: "Purchasing", href: `${base}/financials/purchasing` },
         { label: "Expenses", href: `${base}/financials/expenses` },
         { label: "Capital", href: `${base}/financials/capital` },
@@ -234,6 +243,11 @@ function platformModules(): NavModuleMatch[] {
       items: accountNav[0]?.items ?? [],
     },
   ]
+}
+
+export function moduleByTitle(businessId: string | null, title: string) {
+  const modules = [...(businessId ? businessModules(businessId) : []), ...platformModules()]
+  return modules.find((module) => module.title === title) ?? null
 }
 
 export function matchModule(pathname: string, businessId: string | null) {

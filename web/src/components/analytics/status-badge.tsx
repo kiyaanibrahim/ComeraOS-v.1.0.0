@@ -31,9 +31,11 @@ export function StatusBadge({
 export function TrendBadge({
   delta,
   invert = false,
+  versus = "Versus the prior period",
 }: {
   delta: number
   invert?: boolean
+  versus?: string
 }) {
   const tone = trendTone(delta, invert)
   const Icon =
@@ -46,8 +48,8 @@ export function TrendBadge({
       variant={
         tone === "positive" ? "positive" : tone === "negative" ? "destructive" : "secondary"
       }
-      aria-label={`${text} versus the prior 7 days`}
-      title="Versus the prior 7 days"
+      aria-label={`${text} ${versus.toLowerCase()}`}
+      title={versus}
     >
       <Icon />
       {text}

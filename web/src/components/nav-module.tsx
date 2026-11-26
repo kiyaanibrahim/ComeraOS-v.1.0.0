@@ -10,6 +10,7 @@ import {
   CreditCardIcon,
   FileTextIcon,
   HeartPulseIcon,
+  BanknoteIcon,
   LandmarkIcon,
   LayoutDashboardIcon,
   MapPinIcon,
@@ -51,10 +52,10 @@ const itemIcons: Record<string, LucideIcon> = {
   "Draft Orders": FileTextIcon,
   CRM: UsersIcon,
   "Shipment Tracker": TruckIcon,
+  Revenue: BanknoteIcon,
   Purchasing: WalletIcon,
   Inventory: BoxesIcon,
   Products: PackageIcon,
-  "Product Catalog": TagsIcon,
   Categories: TagsIcon,
   Batches: BoxesIcon,
   Expenses: WalletIcon,
@@ -83,20 +84,26 @@ const itemIcons: Record<string, LucideIcon> = {
   "Account Settings": Settings2Icon,
 }
 
-export function NavModule({ module }: { module: NavModule }) {
+export function NavModule({ module, onBack }: { module: NavModule; onBack: () => void }) {
   const pathname = usePathname()
   const hrefs = module.items.map((item) => item.href)
 
   return (
-    <SidebarGroup className="animate-in fade-in slide-in-from-left-2 duration-200">
+    <SidebarGroup>
       <SidebarGroupLabel className="sr-only">{module.title}</SidebarGroupLabel>
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton tooltip="Home" render={<Link href={module.backHref} />}>
-            <ChevronLeftIcon />
-            <span>{module.title}</span>
+          <SidebarMenuButton
+            tooltip={module.title}
+            className="relative justify-center bg-black/10 px-7 font-medium hover:bg-black/15 dark:bg-black/45 dark:hover:bg-black/55"
+            onClick={onBack}
+          >
+            <ChevronLeftIcon className="absolute left-2 group-data-[collapsible=icon]:static" />
+            <span className="group-data-[collapsible=icon]:sr-only">{module.title}</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
+      </SidebarMenu>
+      <SidebarMenu className="mt-2 gap-1">
         {module.items.map((item) => {
           const Icon = itemIcons[item.label] ?? LayoutDashboardIcon
           return (

@@ -1,6 +1,7 @@
 import { Suspense } from "react"
 import Link from "next/link"
 
+import { RankedBarCard, SeriesAreaCard, StatCard } from "@/components/analytics/stat-card"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -10,6 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { loadVisibleBusiness } from "@/lib/load-business"
+import { percentChange } from "@/lib/stat-series"
 import { createClient } from "@/lib/supabase/server"
 
 export default function HomePage({
@@ -96,19 +98,70 @@ async function salesHome(slug: string, locationId: string | null) {
   const todaySales = sumOn(today)
   const yesterdaySales = sumOn(yesterday)
   const bills = rows.filter((order) => dayOf(order.created_at) === today).length
+  const yesterdayBills = rows.filter((order) => dayOf(order.created_at) === yesterday).length
   const monthOrders = rows.filter((order) => dayOf(order.created_at) >= monthStart)
   const monthSales = monthOrders.reduce((sum, order) => sum + Number(order.total), 0)
+  const priorMonthEnd = shiftDay(monthStart, -1)
+  const priorMonthStart = `${priorMonthEnd.slice(0, 8)}01`
+  const priorMonthSales = rows
+    .filter((order) => {
+      const day = dayOf(order.created_at)
+      return day >= priorMonthStart && day <= priorMonthEnd
+    })
+    .reduce((sum, order) => sum + Number(order.total), 0)
   const customers = new Set(monthOrders.map((order) => order.customer_id).filter(Boolean)).size
+  const priorMonthCustomers = new Set(
+    rows
+      .filter((order) => {
+        const day = dayOf(order.created_at)
+        return day >= priorMonthStart && day <= priorMonthEnd
+      })
+      .map((order) => order.customer_id)
+      .filter(Boolean),
+  ).size
   const series = days.map((day) => ({ day, total: sumOn(day) }))
-  const peak = Math.max(...series.map((item) => item.total), 1)
+  const billSeries = days.map((day) => rows.filter((order) => dayOf(order.created_at) === day).length)
+  const customerSeries = days.map((day) => {
+    return new Set(
+      rows.filter((order) => dayOf(order.created_at) === day).map((order) => order.customer_id).filter(Boolean),
+    ).size
+  })
+  const chartPoints = series.map((item) => ({
+    label: new Date(`${item.day}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+    value: item.total,
+  }))
 
   const recentIds = rows.filter((order) => dayOf(order.created_at) >= days[0]).map((order) => order.id).slice(0, 200)
   const lines = recentIds.length
-    ? await supabase.from("order_lines").select("description, quantity, line_total").eq("business_id", row.id).in("order_id", recentIds)
+    ? await supabase
+        .from("order_lines")
+        .select("description, quantity, line_total, unit_cost, product_id")
+        .eq("business_id", row.id)
+        .in("order_id", recentIds)
     : { data: [] }
+  const catalog =
+    (lines.data?.length ?? 0) > 0
+      ? await supabase
+          .from("products")
+          .select("id, name, parent_id")
+          .eq("business_id", row.id)
+          .in(
+            "id",
+            [...new Set((lines.data ?? []).map((line) => line.product_id).filter(Boolean) as string[])],
+          )
+      : { data: [] }
+  const catalogById = new Map((catalog.data ?? []).map((product) => [product.id, product]))
+  const parentIds = [...new Set((catalog.data ?? []).map((product) => product.parent_id).filter(Boolean) as string[])]
+  const parents = parentIds.length
+    ? await supabase.from("products").select("id, name").eq("business_id", row.id).in("id", parentIds)
+    : { data: [] }
+  const parentName = new Map((parents.data ?? []).map((product) => [product.id, product.name]))
   const products = new Map<string, { quantity: number; total: number }>()
   for (const line of lines.data ?? []) {
-    const name = line.description || "Product"
+    const product = line.product_id ? catalogById.get(line.product_id) : null
+    const name = product?.parent_id
+      ? parentName.get(product.parent_id) || product.name
+      : product?.name || line.description || "Product"
     const current = products.get(name) ?? { quantity: 0, total: 0 }
     current.quantity += Number(line.quantity)
     current.total += Number(line.line_total)
@@ -124,7 +177,7 @@ async function salesHome(slug: string, locationId: string | null) {
     currency: row.currency || "USD",
     maximumFractionDigits: 0,
   })
-  const change = yesterdaySales === 0 ? null : Math.round(((todaySales - yesterdaySales) / yesterdaySales) * 100)
+  const change = percentChange(todaySales, yesterdaySales)
 
   return {
     places: places.data ?? [],
@@ -132,11 +185,20 @@ async function salesHome(slug: string, locationId: string | null) {
     yesterdaySales: money.format(yesterdaySales),
     change,
     bills,
+    billsChange: percentChange(bills, yesterdayBills),
     monthSales: money.format(monthSales),
+    monthChange: percentChange(monthSales, priorMonthSales),
     customers,
-    series,
-    peak,
-    top,
+    customersChange: percentChange(customers, priorMonthCustomers),
+    seriesValues: series.map((item) => item.total),
+    billSeries,
+    customerSeries,
+    chartPoints,
+    top: top.map((product) => ({
+      label: product.name,
+      value: product.total,
+      display: `${product.quantity} · ${money.format(product.total)}`,
+    })),
     money,
   }
 }
@@ -188,74 +250,44 @@ async function HomeContent({
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader>
-            <CardDescription>Today</CardDescription>
-            <CardTitle className="tabular-nums">{sales?.todaySales ?? "—"}</CardTitle>
-            <CardDescription>
-              {sales?.change == null ? `Yesterday ${sales?.yesterdaySales ?? "—"}` : `${sales.change > 0 ? "+" : ""}${sales.change}% vs yesterday`}
-            </CardDescription>
-          </CardHeader>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardDescription>Bills today</CardDescription>
-            <CardTitle className="tabular-nums">{sales?.bills ?? 0}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardDescription>This month</CardDescription>
-            <CardTitle className="tabular-nums">{sales?.monthSales ?? "—"}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardDescription>Customers this month</CardDescription>
-            <CardTitle className="tabular-nums">{sales?.customers ?? 0}</CardTitle>
-          </CardHeader>
-        </Card>
+        <StatCard
+          label="Today"
+          value={sales?.todaySales ?? "—"}
+          delta={sales?.change}
+          chart={sales ? { kind: "area", values: sales.seriesValues } : null}
+        />
+        <StatCard
+          label="Bills today"
+          value={String(sales?.bills ?? 0)}
+          delta={sales?.billsChange}
+          chart={sales ? { kind: "area", values: sales.billSeries } : null}
+        />
+        <StatCard
+          label="This month"
+          value={sales?.monthSales ?? "—"}
+          delta={sales?.monthChange}
+          chart={sales ? { kind: "area", values: sales.seriesValues } : null}
+        />
+        <StatCard
+          label="Customers this month"
+          value={String(sales?.customers ?? 0)}
+          delta={sales?.customersChange}
+          chart={sales ? { kind: "area", values: sales.customerSeries } : null}
+        />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-        <Card>
-          <CardHeader>
-            <CardTitle>Last 14 days</CardTitle>
-            <CardDescription>Completed sales, by day.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex h-36 items-end gap-1">
-              {(sales?.series ?? []).map((item) => (
-                <div key={item.day} className="flex h-full flex-1 flex-col justify-end" title={`${item.day} ${sales?.money.format(item.total) ?? ""}`}>
-                  <div
-                    className="rounded-sm bg-foreground/80"
-                    style={{ height: `${Math.max(4, Math.round((item.total / (sales?.peak || 1)) * 100))}%` }}
-                  />
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Top products</CardTitle>
-            <CardDescription>By sales in the last 14 days.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            {sales?.top.length ? (
-              sales.top.map((product) => (
-                <div key={product.name} className="flex items-baseline justify-between gap-3 text-sm">
-                  <span className="truncate">{product.name}</span>
-                  <span className="shrink-0 tabular-nums text-muted-foreground">
-                    {product.quantity} · {sales.money.format(product.total)}
-                  </span>
-                </div>
-              ))
-            ) : (
-              <p className="text-sm text-muted-foreground">No completed sales in this range.</p>
-            )}
-          </CardContent>
-        </Card>
+        <SeriesAreaCard
+          label="Last 14 days"
+          description="Completed sales, by day."
+          points={sales?.chartPoints ?? []}
+        />
+        <RankedBarCard
+          label="Top products"
+          description="By sales in the last 14 days."
+          items={sales?.top ?? []}
+          empty="No completed sales in this range."
+        />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">

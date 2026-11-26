@@ -1,8 +1,21 @@
+import os from "node:os"
 import type { NextConfig } from "next";
 
 const demo = "/app/demo"
 
+function lanDevOrigins() {
+  const origins = new Set(["localhost", "127.0.0.1", "192.168.100.204"])
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    for (const addr of addrs ?? []) {
+      if (addr.internal) continue
+      if (addr.family === "IPv4" || addr.family === 4) origins.add(addr.address)
+    }
+  }
+  return [...origins]
+}
+
 const nextConfig: NextConfig = {
+  allowedDevOrigins: lanDevOrigins(),
   /* config options here */
   async redirects() {
     const corePaths = [
@@ -15,9 +28,9 @@ const nextConfig: NextConfig = {
       "procurement",
       "inventory",
       "products",
-      "catalog",
       "categories",
       "batches",
+      "financials/revenue",
       "financials/purchasing",
       "financials/expenses",
       "financials/capital",
@@ -89,11 +102,14 @@ const nextConfig: NextConfig = {
       { source: "/app/:businessId/bills", destination: "/app/:businessId/pos/bills", permanent: false },
       { source: "/app/:businessId/financials/reporting", destination: "/app/:businessId/reporting", permanent: false },
       { source: "/app/financials/reporting", destination: `${demo}/reporting`, permanent: false },
+      { source: "/app/:businessId/catalog", destination: "/app/:businessId/products", permanent: false },
+      { source: "/app/catalog", destination: `${demo}/products`, permanent: false },
     ]
   },
   cacheComponents: true,
   partialPrefetching: true,
   turbopack: {
+    root: process.cwd(),
     rules: {
       "*.css": {
         loaders: ["@tailwindcss/turbopack"],

@@ -3,10 +3,11 @@
 import Link from "next/link"
 import { useCallback, useEffect, useState } from "react"
 
-import { PosScreen, statusVariant } from "@/components/pos/pos-screen"
-import { Badge } from "@/components/ui/badge"
+import { PosScreen } from "@/components/pos/pos-screen"
+import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
 import { toast } from "@/components/ui/sonner"
 import { money, quantity, statusLabel } from "@/lib/flow/format"
@@ -160,7 +161,7 @@ function Detail({
           {order.notes ? <p className="text-sm text-muted-foreground">{order.notes}</p> : null}
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant={statusVariant(order.status)}>{statusLabel(order.status)}</Badge>
+          <StatusBadge status={order.status} />
           <Button type="button" variant="outline" nativeButton={false} render={<Link href={`/app/${businessKey}/orders`} />}>
             All orders
           </Button>
@@ -175,26 +176,28 @@ function Detail({
           {lines.length === 0 ? (
             <p className="text-sm text-muted-foreground">This order has no lines.</p>
           ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-left text-muted-foreground">
-                  <th className="py-2 font-medium">Item</th>
-                  <th className="py-2 text-right font-medium">Qty</th>
-                  <th className="py-2 text-right font-medium">Price</th>
-                  <th className="py-2 text-right font-medium">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lines.map((line) => (
-                  <tr key={line.id} className="border-b last:border-0">
-                    <td className="py-2">{line.description}</td>
-                    <td className="py-2 text-right tabular-nums">{quantity(Number(line.quantity))}</td>
-                    <td className="py-2 text-right tabular-nums">{money(Number(line.unit_price), business.currency)}</td>
-                    <td className="py-2 text-right tabular-nums">{money(Number(line.line_total), business.currency)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="overflow-hidden rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Item</TableHead>
+                    <TableHead className="text-right">Qty</TableHead>
+                    <TableHead className="text-right">Price</TableHead>
+                    <TableHead className="text-right">Total</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {lines.map((line) => (
+                    <TableRow key={line.id}>
+                      <TableCell>{line.description}</TableCell>
+                      <TableCell className="text-right tabular-nums">{quantity(Number(line.quantity))}</TableCell>
+                      <TableCell className="text-right tabular-nums">{money(Number(line.unit_price), business.currency)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{money(Number(line.line_total), business.currency)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
           <dl className="mt-4 space-y-1 border-t pt-3 text-sm">
             <div className="flex justify-between">
@@ -229,7 +232,7 @@ function Detail({
                   <div className="font-medium">{bill.number}</div>
                   <div className="text-muted-foreground tabular-nums">{money(Number(bill.total), business.currency)}</div>
                 </div>
-                <Badge variant={statusVariant(bill.status)}>{statusLabel(bill.status)}</Badge>
+                <StatusBadge status={bill.status} />
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">This order has no bill yet.</p>
@@ -252,7 +255,7 @@ function Detail({
                   </div>
                   <div className="text-right">
                     <div className="tabular-nums">{money(Number(payment.amount), business.currency)}</div>
-                    <Badge variant={statusVariant(payment.status)}>{statusLabel(payment.status)}</Badge>
+                    <StatusBadge status={payment.status} />
                   </div>
                 </div>
               ))

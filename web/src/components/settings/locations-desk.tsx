@@ -8,6 +8,7 @@ import { DataTable } from "@/components/data-table/data-table"
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header"
 import type { DataTableFeatures } from "@/components/data-table/data-table-features"
 import { DataTableRowActions } from "@/components/data-table/data-table-row-actions"
+import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -261,7 +262,9 @@ export function LocationsDesk({ businessKey }: { businessKey: string }) {
       {
         accessorKey: "is_active",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Active" />,
-        cell: ({ row }) => (row.original.is_active ? "Active" : "Inactive"),
+        cell: ({ row }) => (
+          <StatusBadge status={row.original.is_active ? "active" : "inactive"} />
+        ),
       },
       {
         id: "actions",
