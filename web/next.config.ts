@@ -1,9 +1,24 @@
+import os from "node:os"
 import type { NextConfig } from "next";
 
 const demo = "/app/demo"
 
+function lanDevOrigins() {
+  const hosts = new Set<string>()
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    for (const addr of addrs ?? []) {
+      if (addr.internal) continue
+      if (addr.family === "IPv4" || addr.family === 4) hosts.add(addr.address)
+      if (addr.family === "IPv6" || addr.family === 6) {
+        hosts.add(addr.address.replace(/%.*/, ""))
+      }
+    }
+  }
+  return [...hosts]
+}
+
 const nextConfig: NextConfig = {
-  /* config options here */
+  allowedDevOrigins: ["127.0.0.1", "0.0.0.0", ...lanDevOrigins()],
   async redirects() {
     const corePaths = [
       "pos",
